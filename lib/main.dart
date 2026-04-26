@@ -1537,30 +1537,18 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           child: done
               ? const Icon(Icons.check_rounded,
                   color: Color(0xFF4CAF50), size: 30)
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Transform.translate(
-                      offset: const Offset(3, 0),
-                      child: Icon(
-                        Icons.back_hand_rounded,
-                        color: colors.accent,
-                        size: 24,
-                      ),
-                    ),
-                    Transform(
-                      alignment: Alignment.center,
-                      transform: Matrix4.identity()..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
-                      child: Transform.translate(
-                        offset: const Offset(3, 0),
-                        child: Icon(
-                          Icons.back_hand_rounded,
-                          color: colors.accent,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                  ],
+              : const Text(
+                  '🙌',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 30,
+                    height: 1,
+                    fontFamilyFallback: [
+                      'Segoe UI Emoji',
+                      'Noto Color Emoji',
+                      'Apple Color Emoji',
+                    ],
+                  ),
                 ),
         ),
       ),
