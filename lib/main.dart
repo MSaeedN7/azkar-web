@@ -1,0 +1,2775 @@
+﻿import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'data.dart';
+import 'prayer_notification_service.dart';
+import 'reset_scheduler.dart';
+import 'vibration_helper.dart';
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await PrayerNotificationService.init();
+  // âœ… Ø¬Ù‡Ù‘Ø² WorkManager Ù„Ù€ auto-reset (ØµØ¨Ø§Ø­ Ø¹Ù†Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„ØŒ Ù…Ø³Ø§Ø¡ Ø¹Ù†Ø¯ Ø§Ù„ÙØ¬Ø±)
+  await initAndScheduleResets();
+  runApp(const AzkarNativeApp());
+}
+
+enum AzkarMode { morning, evening }
+enum RootTab { azkar, hifz }
+enum SheetTab { streaks, calendar, tasbih, settings }
+
+class AzkarNativeApp extends StatelessWidget {
+  const AzkarNativeApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Ø£Ø°ÙƒØ§Ø±',
+      locale: const Locale('ar'),
+      theme: ThemeData(
+        useMaterial3: true,
+        textTheme: GoogleFonts.scheherazadeNewTextTheme(),
+        scaffoldBackgroundColor: const Color(0xFFFDF6E3),
+      ),
+      home: const AzkarHomePage(),
+    );
+  }
+}
+
+class AzkarHomePage extends StatefulWidget {
+  const AzkarHomePage({super.key});
+
+  @override
+  State<AzkarHomePage> createState() => _AzkarHomePageState();
+}
+
+class _AzkarHomePageState extends State<AzkarHomePage> {
+  static const _stateKey = 'native_azkar_state_v2';
+  static const _hifzKey = 'native_hifz_state_v2';
+  static const _dateKey = 'native_date_v2';
+  static const _settingsKey = 'native_settings_v2';
+  static const _tasbihKey = 'native_tasbih_v2';
+  static const _streaksKey = 'native_streaks_v2';
+  static const _historyKey = 'native_history_v2';
+
+  final ScrollController _scrollController = ScrollController();
+  final ScrollController _hifzScrollController = ScrollController();
+
+  late final Map<AzkarMode, List<int>> _counts = {
+    AzkarMode.morning: List<int>.filled(azkarData.length, 0),
+    AzkarMode.evening: List<int>.filled(azkarData.length, 0),
+  };
+  late final List<int> _hifzCounts = List<int>.filled(hifzData.length, 0);
+
+  late final List<GlobalKey> _azkarKeys =
+      List.generate(azkarData.length, (_) => GlobalKey());
+  late final List<GlobalKey> _hifzKeys =
+      List.generate(hifzData.length, (_) => GlobalKey());
+
+  // Keys to measure actual rendered header + progress height at runtime
+  final GlobalKey _headerKey  = GlobalKey();
+  final GlobalKey _progressKey = GlobalKey();
+
+  RootTab _rootTab = RootTab.azkar;
+  AzkarMode _mode = AzkarMode.morning;
+  SheetTab _sheetTab = SheetTab.streaks;
+
+  double _fontSize = 1.35;
+  bool _vibrationEnabled = true;
+  bool _autoScroll = true;
+  bool _notificationsEnabled = false;
+
+  int _tasbihCount = 0;
+  int _tasbihTarget = 33;
+
+  int? _savedFajrHour;
+  int? _savedFajrMinute;
+  int? _savedMaghribHour;
+  int? _savedMaghribMinute;
+
+  // â”€â”€ Manual override: set by user via TimePicker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // null = use GPS value; non-null = user override
+  int? _manualFajrHour;
+  int? _manualFajrMinute;
+  int? _manualMaghribHour;
+  int? _manualMaghribMinute;
+
+  bool _isInitialized = false;
+
+  DateTime _calendarMonth = DateTime(DateTime.now().year, DateTime.now().month);
+
+  final Map<String, Map<String, dynamic>> _streaks = {
+    'morning': {'streak': 0, 'best': 0, 'lastDate': ''},
+    'evening': {'streak': 0, 'best': 0, 'lastDate': ''},
+    'hifz': {'streak': 0, 'best': 0, 'lastDate': ''},
+  };
+
+  final Map<String, Map<String, bool>> _history = {};
+
+  List<int> get _activeAzkarCounts =>
+      _counts[_mode] ?? List<int>.filled(azkarData.length, 0);
+
+  @override
+  void initState() {
+    super.initState();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    await _loadState();
+    await PrayerNotificationService.init();
+    _applyModeByClock();
+    if (mounted) setState(() => _isInitialized = true);
+  }
+
+
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // Ù…Ù†Ø·Ù‚ Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„Ù…Ù†Ø·Ù‚ÙŠ
+  //
+  // â–¸ Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡: ÙˆÙ‚ØªÙ‡Ø§ Ù…Ù† Ø§Ù„Ù…ØºØ±Ø¨ Ø­ØªÙ‰ Ø§Ù„ÙØ¬Ø±.
+  //   Ø¥Ø°Ø§ ÙƒØ§Ù† Ø§Ù„ÙˆÙ‚Øª Ø¨Ø¹Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„ ÙˆÙ‚Ø¨Ù„ Ø§Ù„ÙØ¬Ø± â†’ Ø§Ù„ÙŠÙˆÙ… Ø§Ù„Ù…Ù†Ø·Ù‚ÙŠ = Ø£Ù…Ø³
+  //   (Ù„Ø£Ù† Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… Ù„Ø§ ÙŠØ²Ø§Ù„ ÙÙŠ Ø¬Ù„Ø³Ø© Ù…Ø³Ø§Ø¡ Ø§Ù„ÙŠÙˆÙ… Ø§Ù„Ø³Ø§Ø¨Ù‚).
+  //   Ù‡Ø°Ø§ ÙŠØ¶Ù…Ù†:
+  //     â€¢ Ø§Ù„Ø³Ù„Ø³Ù„Ø© Ù„Ø§ ØªÙ†Ù‚Ø·Ø¹ Ù„Ùˆ Ù‚Ø±Ø£ Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡ Ø¨Ø¹Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„
+  //     â€¢ Ø§Ù„ØªÙ‚ÙˆÙŠÙ… ÙŠÙØ¶Ø¹ Ø§Ù„Ù†Ù‚Ø·Ø© Ø¹Ù„Ù‰ Ø§Ù„ÙŠÙˆÙ… Ø§Ù„ØµØ­ÙŠØ­ (Ø£Ù…Ø³)
+  //
+  // â–¸ Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­ ÙˆØ§Ù„Ø­ÙØ¸: ØªØ¨Ø¯Ø£ Ø¹Ù†Ø¯ Ø§Ù„ÙØ¬Ø± ÙˆØªÙ†ØªÙ‡ÙŠ Ø¹Ù†Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„.
+  //   Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„Ù…Ù†Ø·Ù‚ÙŠ = Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„Ù…ÙŠÙ„Ø§Ø¯ÙŠ Ø§Ù„Ø­Ù‚ÙŠÙ‚ÙŠ Ø¯Ø§Ø¦Ù…Ø§Ù‹.
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+  String _logicalDate({bool forEvening = false}) {
+    final now = DateTime.now();
+    if (forEvening) {
+      final fajrToday = DateTime(
+        now.year, now.month, now.day,
+        _effectiveFajrHour, _effectiveFajrMinute,
+      );
+      if (now.isBefore(fajrToday)) {
+        return _dateStr(now.subtract(const Duration(days: 1)));
+      }
+    }
+    return _dateStr(now);
+  }
+
+  String _dateStr(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+
+  // â”€â”€ Load / Save â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Future<void> _loadState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = _logicalDate(); // Ø§Ù„ØµØ¨Ø§Ø­ = ØªØ§Ø±ÙŠØ® Ø­Ù‚ÙŠÙ‚ÙŠ
+    final savedDate = prefs.getString(_dateKey);
+
+    if (savedDate == today) {
+      // Ù†ÙØ³ Ø§Ù„ÙŠÙˆÙ… â†’ Ø§Ù‚Ø±Ø£ Ø§Ù„Ø­Ø§Ù„Ø© Ø§Ù„Ù…Ø­ÙÙˆØ¸Ø© ÙƒÙ…Ø§ Ù‡ÙŠ
+      final map = _decodeMap(prefs.getString(_stateKey));
+      final hifzMap = _decodeMap(prefs.getString(_hifzKey));
+      _counts[AzkarMode.morning] =
+          _decodeIntList(map['morning'], azkarData.length);
+      _counts[AzkarMode.evening] =
+          _decodeIntList(map['evening'], azkarData.length);
+      final hifzList = _decodeIntList(hifzMap['items'], hifzData.length);
+      for (int i = 0; i < hifzData.length; i++) {
+        _hifzCounts[i] = hifzList[i];
+      }
+    } else {
+      // ÙŠÙˆÙ… Ø¬Ø¯ÙŠØ¯ (ØªØ¬Ø§ÙˆØ²Ù†Ø§ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„) â†’ ØµÙÙ‘Ø± Ø§Ù„ØµØ¨Ø§Ø­ ÙˆØ§Ù„Ø­ÙØ¸ ÙÙ‚Ø·
+      // Ø§Ù„Ù…Ø³Ø§Ø¡ ÙŠÙØµÙÙŽÙ‘Ø± Ø¹Ù†Ø¯ Ø§Ù„ÙØ¬Ø± Ø¨ÙˆØ§Ø³Ø·Ø© WorkManager
+      final map = _decodeMap(prefs.getString(_stateKey));
+      map['morning'] = List<int>.filled(azkarData.length, 0);
+      await prefs.setString(_stateKey, jsonEncode(map));
+      await prefs.setString(
+        _hifzKey,
+        jsonEncode({'items': List<int>.filled(hifzData.length, 0)}),
+      );
+      await prefs.setString(_dateKey, today);
+
+      // Ø§Ø¨Ù‚Ù Ø¹Ù„Ù‰ Ù‚ÙŠÙ… Ø§Ù„Ù…Ø³Ø§Ø¡ Ù„Ùˆ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… Ù„Ø§ ÙŠØ²Ø§Ù„ ÙÙŠ Ø¬Ù„Ø³Ø© Ø§Ù„Ù…Ø³Ø§Ø¡
+      _counts[AzkarMode.evening] =
+          _decodeIntList(map['evening'], azkarData.length);
+    }
+
+    final settings = _decodeMap(prefs.getString(_settingsKey));
+    _vibrationEnabled = settings['vibration'] ?? true;
+    _autoScroll = settings['autoScroll'] ?? true;
+    _notificationsEnabled = settings['notifications'] ?? false;
+    if (kIsWeb) {
+      _vibrationEnabled = false;
+      _notificationsEnabled = false;
+    }
+    final savedFontSize = (settings['fontSize'] ?? 1.35).toDouble();
+    if ((savedFontSize - 1.32).abs() < 0.02) {
+      _fontSize = 1.35;
+    } else if ((savedFontSize - 1.60).abs() < 0.02) {
+      _fontSize = 1.85;
+    } else if ((savedFontSize - 1.05).abs() < 0.02) {
+      _fontSize = 0.95;
+    } else {
+      _fontSize = savedFontSize;
+    }
+
+    final tasbih = _decodeMap(prefs.getString(_tasbihKey));
+    _tasbihCount = tasbih['count'] ?? 0;
+    _tasbihTarget = tasbih['target'] ?? 33;
+
+    _savedFajrHour = prefs.getInt('fajr_hour');
+    _savedFajrMinute = prefs.getInt('fajr_minute');
+    _savedMaghribHour = prefs.getInt('maghrib_hour');
+    _savedMaghribMinute = prefs.getInt('maghrib_minute');
+
+    // manual overrides â€” null if never set
+    final mfh = prefs.getInt('manual_fajr_hour');
+    final mfm = prefs.getInt('manual_fajr_minute');
+    final mmh = prefs.getInt('manual_maghrib_hour');
+    final mmm = prefs.getInt('manual_maghrib_minute');
+    _manualFajrHour    = mfh;
+    _manualFajrMinute  = mfm;
+    _manualMaghribHour = mmh;
+    _manualMaghribMinute = mmm;
+
+    // apply overrides to live fajr fields so _applyModeByClock uses them
+    if (_manualFajrHour != null)   _savedFajrHour   = _manualFajrHour;
+    if (_manualFajrMinute != null) _savedFajrMinute  = _manualFajrMinute;
+
+    final streaks = _decodeMap(prefs.getString(_streaksKey));
+    for (final key in _streaks.keys) {
+      final value = streaks[key];
+      if (value is Map) {
+        _streaks[key] = {
+          'streak': value['streak'] ?? 0,
+          'best': value['best'] ?? 0,
+          'lastDate': value['lastDate'] ?? '',
+        };
+      }
+    }
+
+    final historyMap = _decodeMap(prefs.getString(_historyKey));
+    for (final entry in historyMap.entries) {
+      final value = entry.value;
+      if (value is Map) {
+        _history[entry.key] = {
+          'morning': value['morning'] == true,
+          'evening': value['evening'] == true,
+          'hifz': value['hifz'] == true,
+        };
+      }
+    }
+  }
+
+  Map<String, dynamic> _decodeMap(String? input) {
+    if (input == null || input.isEmpty) return {};
+    try {
+      return Map<String, dynamic>.from(jsonDecode(input) as Map);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  List<int> _decodeIntList(dynamic input, int size) {
+    if (input is List) {
+      final vals = input.map((e) => (e as num).toInt()).toList();
+      return vals.length == size ? vals : List<int>.filled(size, 0);
+    }
+    return List<int>.filled(size, 0);
+  }
+
+  Future<void> _saveState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_dateKey, _logicalDate());
+    await prefs.setString(
+      _stateKey,
+      jsonEncode({
+        'morning': _counts[AzkarMode.morning],
+        'evening': _counts[AzkarMode.evening],
+      }),
+    );
+    await prefs.setString(_hifzKey, jsonEncode({'items': _hifzCounts}));
+    await prefs.setString(
+      _settingsKey,
+      jsonEncode({
+        'vibration': _vibrationEnabled,
+        'autoScroll': _autoScroll,
+        'notifications': _notificationsEnabled,
+        'fontSize': _fontSize,
+      }),
+    );
+    await prefs.setString(
+      _tasbihKey,
+      jsonEncode({'count': _tasbihCount, 'target': _tasbihTarget}),
+    );
+    await prefs.setString(_streaksKey, jsonEncode(_streaks));
+    await prefs.setString(_historyKey, jsonEncode(_history));
+  }
+
+  // â”€â”€ ÙˆØ¶Ø¹ Ø§Ù„ØµØ¨Ø§Ø­/Ø§Ù„Ù…Ø³Ø§Ø¡ Ø¨Ù†Ø§Ø¡Ù‹ Ø¹Ù„Ù‰ ÙˆÙ‚Øª Ø§Ù„ÙØ¬Ø± Ø§Ù„Ø­Ù‚ÙŠÙ‚ÙŠ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  void _applyModeByClock() {
+  final now = DateTime.now();
+
+  final fajr = DateTime(
+    now.year,
+    now.month,
+    now.day,
+    _effectiveFajrHour,
+    _effectiveFajrMinute,
+  );
+
+  final maghrib = DateTime(
+    now.year,
+    now.month,
+    now.day,
+    _effectiveMaghribHour,
+    _effectiveMaghribMinute,
+  );
+
+  if (now.isBefore(fajr)) {
+    _mode = AzkarMode.evening;
+  } else if (now.isBefore(maghrib)) {
+    _mode = AzkarMode.morning;
+  } else {
+    _mode = AzkarMode.evening;
+  }
+
+  _setSystemBars();
+}
+
+  // â”€â”€ Ø§Ù„ÙˆÙ‚Øª Ø§Ù„ÙØ¹Ù„ÙŠ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù…: override Ø¥Ù† ÙˆÙØ¬Ø¯ØŒ ÙˆØ¥Ù„Ø§ GPS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  int get _effectiveFajrHour      => _manualFajrHour      ?? _savedFajrHour    ?? 5;
+  int get _effectiveFajrMinute    => _manualFajrMinute    ?? _savedFajrMinute  ?? 0;
+  int get _effectiveMaghribHour   => _manualMaghribHour   ?? _savedMaghribHour   ?? 18;
+  int get _effectiveMaghribMinute => _manualMaghribMinute ?? _savedMaghribMinute ?? 0;
+
+  bool get _hasFajrOverride    => _manualFajrHour    != null;
+  bool get _hasMaghribOverride => _manualMaghribHour != null;
+
+  String _fmtTime(int h, int m) =>
+      '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+
+  // â”€â”€ ÙØªØ­ TimePicker ÙˆØªØ·Ø¨ÙŠÙ‚ override â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Future<void> _pickPrayerTime({
+    required bool isFajr,
+    required StateSetter setModal,
+  }) async {
+    final initial = TimeOfDay(
+      hour:   isFajr ? _effectiveFajrHour   : _effectiveMaghribHour,
+      minute: isFajr ? _effectiveFajrMinute : _effectiveMaghribMinute,
+    );
+
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: initial,
+      helpText: isFajr ? 'Ø¶Ø¨Ø· ÙˆÙ‚Øª Ø§Ù„ÙØ¬Ø±' : 'Ø¶Ø¨Ø· ÙˆÙ‚Øª Ø§Ù„Ù…ØºØ±Ø¨',
+      builder: (ctx, child) {
+        final colors = _modeColors;
+        final isMorningTheme =
+            _rootTab == RootTab.hifz || _mode == AzkarMode.morning;
+
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: Theme(
+            data: Theme.of(ctx).copyWith(
+              colorScheme: ColorScheme.light(
+                primary: colors.accent,
+                onPrimary: isMorningTheme ? Colors.white : colors.buttonFg,
+                surface: colors.card,
+                onSurface: colors.text,
+              ),
+              dialogTheme: DialogThemeData(
+                backgroundColor: colors.card,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+              ),
+              timePickerTheme: TimePickerThemeData(
+                backgroundColor: colors.card,
+                hourMinuteColor: colors.chipBg,
+                hourMinuteTextColor: colors.accentText,
+                dayPeriodColor: WidgetStateColor.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) {
+                    return colors.accent;
+                  }
+                  return colors.chipBg;
+                }),
+                dayPeriodTextColor: WidgetStateColor.resolveWith((states) {
+                  if (states.contains(WidgetState.selected)) {
+                    return isMorningTheme ? Colors.white : colors.buttonFg;
+                  }
+                  return colors.accentText;
+                }),
+                dayPeriodBorderSide: BorderSide(color: colors.border),
+                dialBackgroundColor: colors.background.withValues(alpha: 0.4),
+                dialHandColor: colors.accent,
+                dialTextColor: colors.text,
+                entryModeIconColor: colors.accentText,
+                helpTextStyle: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: colors.title,
+                ),
+                hourMinuteTextStyle: TextStyle(
+                  fontSize: 52,
+                  fontWeight: FontWeight.w700,
+                  color: colors.accentText,
+                ),
+                dayPeriodTextStyle: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: colors.accentText,
+                ),
+                dialTextStyle: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                  color: colors.text,
+                ),
+                confirmButtonStyle: TextButton.styleFrom(
+                  foregroundColor: colors.accent,
+                  textStyle: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                cancelButtonStyle: TextButton.styleFrom(
+                  foregroundColor: colors.accentText.withValues(alpha: 0.75),
+                  textStyle: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            child: child!,
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    if (isFajr) {
+      await prefs.setInt('manual_fajr_hour',   picked.hour);
+      await prefs.setInt('manual_fajr_minute', picked.minute);
+      setState(() {
+        _manualFajrHour   = picked.hour;
+        _manualFajrMinute = picked.minute;
+        _savedFajrHour    = picked.hour;
+        _savedFajrMinute  = picked.minute;
+      });
+    } else {
+      await prefs.setInt('manual_maghrib_hour',   picked.hour);
+      await prefs.setInt('manual_maghrib_minute', picked.minute);
+      setState(() {
+        _manualMaghribHour   = picked.hour;
+        _manualMaghribMinute = picked.minute;
+      });
+    }
+
+    if (_notificationsEnabled) await _rescheduleWithOverrides();
+    setModal(() {});
+  }
+
+  // â”€â”€ Ø¥Ø¹Ø§Ø¯Ø© Ø¶Ø¨Ø· Ø¥Ù„Ù‰ GPS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Future<void> _resetPrayerTimeToGps({
+    required bool isFajr,
+    required StateSetter setModal,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (isFajr) {
+      await prefs.remove('manual_fajr_hour');
+      await prefs.remove('manual_fajr_minute');
+      setState(() {
+        _manualFajrHour   = null;
+        _manualFajrMinute = null;
+        _savedFajrHour    = prefs.getInt('fajr_hour');
+        _savedFajrMinute  = prefs.getInt('fajr_minute');
+      });
+    } else {
+      await prefs.remove('manual_maghrib_hour');
+      await prefs.remove('manual_maghrib_minute');
+      setState(() {
+        _manualMaghribHour   = null;
+        _manualMaghribMinute = null;
+      });
+    }
+
+    if (_notificationsEnabled) await _rescheduleWithOverrides();
+    setModal(() {});
+  }
+
+  // â”€â”€ Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ø¬Ø¯ÙˆÙ„Ø© Ø¨Ø§Ù„Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ÙØ¹Ù„ÙŠØ© (GPS Ø£Ùˆ override) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Future<void> _rescheduleWithOverrides() async {
+    try {
+      await PrayerNotificationService.cancelAll();
+      final now = DateTime.now();
+      int notifId = 0;
+      for (int day = 0; day < 7; day++) {
+        final date = now.add(Duration(days: day));
+        final fajr = DateTime(
+          date.year, date.month, date.day,
+          _effectiveFajrHour, _effectiveFajrMinute,
+        );
+        final maghrib = DateTime(
+          date.year, date.month, date.day,
+          _effectiveMaghribHour, _effectiveMaghribMinute,
+        );
+        if (fajr.isAfter(now)) {
+          await PrayerNotificationService.scheduleManual(
+            id: notifId++,
+            title: 'ðŸŒ… Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­',
+            body: 'Ø­Ø§Ù† ÙˆÙ‚Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­ â€” Ø¨Ø§Ø±Ùƒ Ø§Ù„Ù„Ù‡ ÙÙŠ ÙŠÙˆÙ…Ùƒ',
+            scheduledTime: fajr,
+          );
+        }
+        if (maghrib.isAfter(now)) {
+          await PrayerNotificationService.scheduleManual(
+            id: notifId++,
+            title: 'ðŸŒ™ Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡',
+            body: 'Ø­Ø§Ù† ÙˆÙ‚Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡ â€” Ø­ÙØ¸Ùƒ Ø§Ù„Ù„Ù‡',
+            scheduledTime: maghrib,
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  // â”€â”€ ØªÙØ¹ÙŠÙ„/ØªØ¹Ø·ÙŠÙ„ Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Future<void> _toggleNotifications() async {
+    if (!_notificationsEnabled) {
+      // â”€â”€ ØªÙØ¹ÙŠÙ„: Ø¬Ù„Ø¨ Ø§Ù„Ù…ÙˆÙ‚Ø¹ ÙˆØ¬Ø¯ÙˆÙ„Ø© Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      _showSnack('Ø¬Ø§Ø±Ù Ø¬Ù„Ø¨ Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø©...');
+      try {
+        final result = await PrayerNotificationService.scheduleFromLocation();
+        await scheduleAllResets();
+
+        // â”€â”€ ØªØ­Ø¯ÙŠØ« Ø§Ù„Ø£ÙˆÙ‚Ø§Øª ÙÙŠ Ø§Ù„Ù€ state ÙÙˆØ±Ø§Ù‹ Ø¨Ø¹Ø¯ Ø§Ù„Ø¬Ù„Ø¨ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // scheduleFromLocation ØªØ­ÙØ¸ Ø§Ù„Ø£ÙˆÙ‚Ø§Øª ÙÙŠ SharedPreferences
+        // Ù„ÙƒÙ† Ø§Ù„Ù…ØªØºÙŠØ±Ø§Øª ÙÙŠ Ø§Ù„Ø°Ø§ÙƒØ±Ø© ØªØ¸Ù„ Ù‚Ø¯ÙŠÙ…Ø© Ø­ØªÙ‰ Ù†Ø­Ø¯Ù‘Ø«Ù‡Ø§ Ù‡Ù†Ø§
+        final prefs = await SharedPreferences.getInstance();
+        if (mounted) {
+          setState(() {
+            _notificationsEnabled = true;
+            // Ø§Ù‚Ø±Ø£ Ø§Ù„Ø£ÙˆÙ‚Ø§Øª Ø§Ù„Ø¬Ø¯ÙŠØ¯Ø© Ù…Ù† Ø§Ù„Ù€ prefs Ù…Ø¨Ø§Ø´Ø±Ø©
+            _savedFajrHour    = prefs.getInt('fajr_hour');
+            _savedFajrMinute  = prefs.getInt('fajr_minute');
+            _savedMaghribHour   = prefs.getInt('maghrib_hour');
+            _savedMaghribMinute = prefs.getInt('maghrib_minute');
+            // Ø¥Ø°Ø§ Ù„Ù… ÙŠÙƒÙ† Ù‡Ù†Ø§Ùƒ override ÙŠØ¯ÙˆÙŠØŒ Ø£ÙˆÙ‚Ø§Øª Ø§Ù„Ù€ GPS Ù‡ÙŠ Ø§Ù„ÙØ¹Ù„ÙŠØ©
+            if (_manualFajrHour == null) {
+              // Ù„Ø§ Ø´ÙŠØ¡ â€” _effectiveFajrHour Ø³ÙŠÙ‚Ø±Ø£ _savedFajrHour ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹
+            }
+          });
+        }
+
+        await _saveState();
+        _showSnack(result);
+      } catch (e) {
+        _showSnack('Ø­Ø¯Ø« Ø®Ø·Ø£: $e');
+      }
+    } else {
+      // â”€â”€ Ø¥ÙŠÙ‚Ø§Ù: Ø¥Ù„ØºØ§Ø¡ Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      try {
+        await PrayerNotificationService.cancelAll();
+      } catch (_) {
+        // Ø­ØªÙ‰ Ù„Ùˆ ÙØ´Ù„ Ø§Ù„Ø¥Ù„ØºØ§Ø¡ØŒ Ù†ÙØ­Ø¯Ù‘Ø« Ø§Ù„Ù€ state
+      }
+      if (mounted) setState(() => _notificationsEnabled = false);
+      await _saveState();
+      _showSnack('ØªÙ… Ø¥ÙŠÙ‚Ø§Ù Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª');
+    }
+  }
+
+  Future<void> _vibrate([List<int> pattern = const [0, 55]]) async {
+    if (!_vibrationEnabled) return;
+    await vibrateFeedback(pattern);
+  }
+
+  int _targetForAzkar(int index) {
+    final raw = azkarData[index].count;
+    return raw <= 0 ? 1 : raw;
+  }
+
+  int _targetForHifz(int index) {
+    final raw = hifzData[index].count ?? 1;
+    return raw <= 0 ? 1 : raw;
+  }
+
+  Future<void> _incrementAzkar(int index) async {
+    final items = _activeAzkarCounts;
+    final target = _targetForAzkar(index);
+    if (items[index] >= target) return;
+
+    setState(() => items[index]++);
+    await _vibrate();
+    await _saveState();
+
+    if (items[index] >= target) {
+      await _checkCompletion();
+      if (_autoScroll) {
+        final next = _nextIncompleteAzkarIndex(items);
+        if (next != null) await _scrollToKey(_azkarKeys[next]);
+      }
+    }
+  }
+
+  Future<void> _incrementHifz(int index) async {
+    final target = _targetForHifz(index);
+    if (_hifzCounts[index] >= target) return;
+
+    setState(() => _hifzCounts[index]++);
+    await _vibrate();
+    await _saveState();
+
+    if (_hifzCounts[index] >= target) {
+      await _checkCompletion();
+      if (_autoScroll) {
+        final next = _nextIncompleteHifzIndex();
+        if (next != null) await _scrollToKey(_hifzKeys[next]);
+      }
+    }
+  }
+
+  int? _nextIncompleteAzkarIndex(List<int> items) {
+    for (int i = 0; i < items.length; i++) {
+      if (items[i] < _targetForAzkar(i)) return i;
+    }
+    return null;
+  }
+
+  int? _nextIncompleteHifzIndex() {
+    for (int i = 0; i < _hifzCounts.length; i++) {
+      if (_hifzCounts[i] < _targetForHifz(i)) return i;
+    }
+    return null;
+  }
+
+  Future<void> _scrollToKey(GlobalKey key) async {
+    final controller =
+        _rootTab == RootTab.hifz ? _hifzScrollController : _scrollController;
+    if (!controller.hasClients) return;
+
+    await Future.delayed(const Duration(milliseconds: 120));
+    if (!mounted) return;
+
+    final renderObj = key.currentContext?.findRenderObject();
+    final headerRender = _headerKey.currentContext?.findRenderObject();
+    final progressRender = _progressKey.currentContext?.findRenderObject();
+    if (renderObj is! RenderBox) return;
+
+    final target = renderObj;
+
+    // Measure the actual rendered height of header + progress bar
+    double fixedAreaHeight = 0;
+    if (headerRender is RenderBox)   fixedAreaHeight += headerRender.size.height;
+    if (progressRender is RenderBox) fixedAreaHeight += progressRender.size.height;
+    // Fallback if keys aren't attached yet
+    if (fixedAreaHeight < 10) fixedAreaHeight = 180;
+
+    final viewportHeight = MediaQuery.of(context).size.height;
+    final availableHeight =
+        (viewportHeight - fixedAreaHeight).clamp(120.0, double.infinity);
+    final cardHeight = target.size.height;
+    const double topPadding = 10.0;
+    final centerOffset = (availableHeight - cardHeight) / 2;
+    final desiredTopOffset = cardHeight > availableHeight * 0.72
+        ? topPadding
+        : centerOffset.clamp(topPadding, availableHeight / 2);
+
+    // Short cards can sit near the middle comfortably, but long cards
+    // should start close to the top so their first lines remain visible.
+    final cardScreenTop = target.localToGlobal(Offset.zero).dy;
+    final newOffset = controller.offset +
+        cardScreenTop -
+        fixedAreaHeight -
+        desiredTopOffset;
+
+    await controller.animateTo(
+      newOffset.clamp(0.0, controller.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Future<void> _checkCompletion() async {
+    final key = _rootTab == RootTab.hifz
+        ? 'hifz'
+        : (_mode == AzkarMode.morning ? 'morning' : 'evening');
+
+    final completed = _rootTab == RootTab.hifz
+        ? _hifzCounts.asMap().entries.every((e) {
+            final rawCount = hifzData[e.key].count ?? 0;
+            if (rawCount <= 0) return true;
+            return e.value >= rawCount;
+          })
+        : _activeAzkarCounts.asMap().entries
+            .every((e) => e.value >= _targetForAzkar(e.key));
+
+    if (!completed || !mounted) return;
+
+    // âœ… Ø§Ù„Ù…Ø³Ø§Ø¡ ÙŠØ³ØªØ®Ø¯Ù… forEvening: true â†’ ÙŠØ­Ø³Ø¨ Ø¹Ù„Ù‰ Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„ØµØ­ÙŠØ­ Ø­ØªÙ‰ Ù„Ùˆ Ø¨Ø¹Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„
+    final today = _logicalDate(forEvening: key == 'evening');
+    final alreadyMarked = _history[today]?[key] == true;
+    if (alreadyMarked) return;
+
+    await _markHistoryComplete(key);
+    await _updateStreak(key);
+
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (mounted) await _showCompletionScreen();
+    });
+  }
+
+  Future<void> _showCompletionScreen() async {
+    final colors = _modeColors;
+    final icon = _rootTab == RootTab.hifz
+        ? Icons.shield_rounded
+        : Icons.volunteer_activism_rounded;
+    final subtitle = _rootTab == RootTab.hifz
+        ? 'Ø§ÙƒØªÙ…Ù„Øª Ø¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸'
+        : _mode == AzkarMode.morning
+            ? 'Ø§ÙƒØªÙ…Ù„Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­'
+            : 'Ø§ÙƒØªÙ…Ù„Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡';
+    final secondary =
+        _rootTab == RootTab.hifz ? 'Ø­ÙØ¸Ùƒ Ø§Ù„Ù„Ù‡ ÙˆØ±Ø¹Ø§Ùƒ ðŸ¤²' : 'ØªÙ‚Ø¨Ù‘Ù„ Ø§Ù„Ù„Ù‡ Ù…Ù†Ùƒ ðŸ¤²';
+
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: 'completion',
+      barrierColor: colors.background.withValues(alpha: 0.92),
+      transitionDuration: const Duration(milliseconds: 240),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: Material(
+            color: Colors.transparent,
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 96,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        color: colors.card,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: colors.border),
+                        boxShadow: [
+                          BoxShadow(
+                            color: colors.accent.withValues(alpha: 0.18),
+                            blurRadius: 22,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: Icon(icon, size: 48, color: colors.accent),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Ø£Ø­Ø³Ù†Øª!',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.scheherazadeNew(
+                        fontSize: 34,
+                        fontWeight: FontWeight.w700,
+                        color: colors.title,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      subtitle,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.amiri(
+                          fontSize: 22, height: 1.6, color: colors.text),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      secondary,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.amiri(
+                        fontSize: 20,
+                        height: 1.6,
+                        color: colors.accentText.withValues(alpha: 0.88),
+                      ),
+                    ),
+                    const SizedBox(height: 26),
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: colors.accent,
+                        foregroundColor:
+                            _rootTab == RootTab.hifz || _mode == AzkarMode.morning
+                                ? Colors.white
+                                : colors.buttonFg,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 34, vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999)),
+                      ),
+                      child: Text(
+                        'Ø§Ù„Ø¹ÙˆØ¯Ø©',
+                        style: GoogleFonts.scheherazadeNew(
+                            fontSize: 22, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _markHistoryComplete(String key) async {
+    final today = _logicalDate(forEvening: key == 'evening');
+    final entry =
+        _history[today] ?? {'morning': false, 'evening': false, 'hifz': false};
+    entry[key] = true;
+    _history[today] = entry;
+    await _saveState();
+  }
+
+  Future<void> _updateStreak(String key) async {
+    final todayKey = _logicalDate(forEvening: key == 'evening');
+    final entry = _streaks[key] ?? {'streak': 0, 'best': 0, 'lastDate': ''};
+    final lastDate = entry['lastDate'] as String? ?? '';
+
+    if (lastDate == todayKey) return;
+
+    int streak = (entry['streak'] as int?) ?? 0;
+    final best = (entry['best'] as int?) ?? 0;
+
+    if (lastDate.isNotEmpty) {
+      final prev = DateTime.tryParse(lastDate);
+      final logicalToday = DateTime.tryParse(todayKey)!;
+      if (prev != null &&
+          logicalToday
+                  .difference(DateTime(prev.year, prev.month, prev.day))
+                  .inDays ==
+              1) {
+        streak += 1;
+      } else {
+        streak = 1;
+      }
+    } else {
+      streak = 1;
+    }
+
+    entry['streak'] = streak;
+    entry['best'] = streak > best ? streak : best;
+    entry['lastDate'] = todayKey;
+    _streaks[key] = entry;
+    await _saveState();
+  }
+
+  Future<void> _resetCurrent() async {
+    final key = _rootTab == RootTab.hifz
+        ? 'hifz'
+        : (_mode == AzkarMode.morning ? 'morning' : 'evening');
+    final today = _logicalDate(forEvening: key == 'evening');
+
+    if (_rootTab == RootTab.hifz) {
+      setState(() {
+        for (int i = 0; i < _hifzCounts.length; i++) { _hifzCounts[i] = 0; }
+      });
+    } else {
+      setState(() {
+        _counts[_mode] = List<int>.filled(azkarData.length, 0);
+      });
+    }
+
+    if (_history[today] != null) {
+      _history[today]![key] = false;
+    }
+
+    await _saveState();
+  }
+
+  void _handleHorizontalSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < 120) return;
+    setState(() {
+      _rootTab = _rootTab == RootTab.azkar ? RootTab.hifz : RootTab.azkar;
+    });
+  }
+
+  void _setSystemBars() {
+    final colors = _modeColors;
+    final darkIcons = _rootTab == RootTab.hifz || _mode == AzkarMode.morning;
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: colors.background,
+        systemNavigationBarDividerColor: colors.background,
+        statusBarIconBrightness:
+            darkIcons ? Brightness.dark : Brightness.light,
+        systemNavigationBarIconBrightness:
+            darkIcons ? Brightness.dark : Brightness.light,
+      ),
+    );
+  }
+
+  _ModeColors get _modeColors {
+    if (_rootTab == RootTab.hifz) {
+      return const _ModeColors(
+        background: Color(0xFFE8F4FD),
+        card: Color(0xFFFFFFFF),
+        text: Color(0xFF0D2A3D),
+        border: Color(0x332A7ABF),
+        accent: Color(0xFF2A7ABF),
+        accentText: Color(0xFF0D3A5C),
+        title: Color(0xFF0D3A5C),
+        chipBg: Color(0xFFFFFFFF),
+        chipSelected: Color(0xFF2A7ABF),
+        buttonFg: Color(0xFFFFFFFF),
+      );
+    }
+    if (_mode == AzkarMode.morning) {
+      return const _ModeColors(
+        background: Color(0xFFFDF6E3),
+        card: Color(0xFFFFFAEB),
+        text: Color(0xFF2C1F0E),
+        border: Color(0x338B6914),
+        accent: Color(0xFFC9A84C),
+        accentText: Color(0xFF5A3A0A),
+        title: Color(0xFF5A3A0A),
+        chipBg: Color(0xFFFFFAEB),
+        chipSelected: Color(0xFFC9A84C),
+        buttonFg: Color(0xFF2C1F0E),
+      );
+    }
+    return const _ModeColors(
+      background: Color(0xFF170A26),
+      card: Color(0xFF342C43),
+      text: Color(0xFFF2E3BC),
+      border: Color(0x44C9A84C),
+      accent: Color(0xFFC9A84C),
+      accentText: Color(0xFFE8D08A),
+      title: Color(0xFFE8D08A),
+      chipBg: Color(0xFF3E3551),
+      chipSelected: Color(0xFF6A5E79),
+      buttonFg: Color(0xFF24163A),
+    );
+  }
+
+  int get _completedItemsCount {
+    if (_rootTab == RootTab.hifz) {
+      int done = 0;
+      for (int i = 0; i < _hifzCounts.length; i++) {
+        final rawCount = hifzData[i].count ?? 0;
+        if (rawCount <= 0) continue;
+        if (_hifzCounts[i] >= rawCount) done++;
+      }
+      return done;
+    }
+    int done = 0;
+    final items = _activeAzkarCounts;
+    for (int i = 0; i < items.length; i++) {
+      if (items[i] >= _targetForAzkar(i)) done++;
+    }
+    return done;
+  }
+
+  int get _totalItemsCount {
+    if (_rootTab == RootTab.hifz) {
+      return hifzData.where((item) => (item.count ?? 0) > 0).length;
+    }
+    return azkarData.length;
+  }
+
+  double get _progress =>
+      _totalItemsCount == 0
+          ? 0
+          : (_completedItemsCount / _totalItemsCount).clamp(0, 1);
+
+  String get _progressText => '$_totalItemsCount / $_completedItemsCount';
+
+  void _showSnack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text, textAlign: TextAlign.center)),
+    );
+  }
+
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // BUILD
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  @override
+  Widget build(BuildContext context) {
+    final colors = _modeColors;
+    _setSystemBars();
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          backgroundColor: colors.background,
+          body: !_isInitialized
+              ? const Center(child: CircularProgressIndicator())
+              : GestureDetector(
+                  onHorizontalDragEnd: _handleHorizontalSwipe,
+                  child: Stack(
+                    children: [
+                      if (_mode == AzkarMode.evening && _rootTab == RootTab.azkar)
+                        const _EveningStarsBackground(),
+                      SafeArea(
+                        top: false,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                colors.background,
+                                colors.background.withValues(alpha: 0.98),
+                              ],
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              _buildHeader(colors, key: _headerKey),
+              _buildProgress(colors, key: _progressKey),
+                              Expanded(
+                                child: _rootTab == RootTab.hifz
+                                    ? _buildHifzList(colors)
+                                    : _buildAzkarList(colors),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          bottomNavigationBar: _buildBottomBar(colors),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: _resetCurrent,
+            backgroundColor: colors.chipBg,
+            foregroundColor: colors.accentText,
+            elevation: 10,
+            icon: const Icon(Icons.restart_alt_rounded),
+            label: const Text('Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ø¨Ø¯Ø¡'),
+          ),
+          floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(_ModeColors colors, {Key? key}) {
+    final title = _rootTab == RootTab.hifz
+        ? 'Ø¢ÙŠÙŽØ§ØªÙ Ø§Ù„Ø­ÙÙÙ’Ø¸'
+        : _mode == AzkarMode.morning
+            ? 'Ø£ÙŽØ°Ù’ÙƒÙŽØ§Ø±Ù Ø§Ù„ØµÙŽÙ‘Ø¨ÙŽØ§Ø­Ù'
+            : 'Ø£ÙŽØ°Ù’ÙƒÙŽØ§Ø±Ù Ø§Ù„Ù…ÙŽØ³ÙŽØ§Ø¡Ù';
+
+    final subtitle = _rootTab == RootTab.hifz
+        ? 'ÙˆØ±Ø¯ Ø§Ù„Ø­ÙØ¸ ÙˆØ§Ù„ØªØ­ØµÙŠÙ†'
+        : _mode == AzkarMode.morning
+            ? 'Ù…Ù† Ø§Ù„ÙØ¬Ø± Ø¥Ù„Ù‰ Ø§Ù„Ù…ØºØ±Ø¨'
+            : 'Ù…Ù† Ø§Ù„Ù…ØºØ±Ø¨ Ø¥Ù„Ù‰ Ø§Ù„ÙØ¬Ø±';
+
+    return Container(
+      key: key,
+      padding: const EdgeInsets.fromLTRB(16, 46, 16, 18),
+      decoration:
+          BoxDecoration(border: Border(bottom: BorderSide(color: colors.border))),
+      child: Column(
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              IconButton(
+                onPressed: _openBottomSheet,
+                icon: Icon(Icons.more_vert_rounded,
+                    color: colors.accentText, size: 30),
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      'Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ù',
+                      style: GoogleFonts.amiri(
+                        color: colors.accentText.withValues(alpha: 0.72),
+                        fontSize: 19,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.scheherazadeNew(
+                        color: colors.title,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.amiri(
+                        color: colors.accentText.withValues(alpha: 0.72),
+                        fontSize: 19,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 48),
+            ],
+          ),
+          if (_rootTab == RootTab.azkar) ...[
+            const SizedBox(height: 16),
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: colors.border),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildModeButton('Ø§Ù„ØµØ¨Ø§Ø­', AzkarMode.morning, colors,
+                      icon: Icons.wb_sunny_rounded),
+                  _buildModeButton('Ø§Ù„Ù…Ø³Ø§Ø¡', AzkarMode.evening, colors,
+                      icon: Icons.nights_stay_rounded),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeButton(String label, AzkarMode mode, _ModeColors colors,
+      {IconData? icon}) {
+    final active = _mode == mode;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: () => setState(() => _mode = mode),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          color: active
+              ? colors.accent
+                  .withValues(alpha: _mode == AzkarMode.morning ? 1 : 0.18)
+              : Colors.transparent,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          textDirection: TextDirection.rtl,
+          children: [
+            Text(
+              label,
+              style: GoogleFonts.scheherazadeNew(
+                color: active && _mode == AzkarMode.morning
+                    ? colors.background
+                    : colors.accentText,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (icon != null) ...[
+              const SizedBox(width: 3),
+              Icon(
+                icon,
+                size: 19,
+                color: active && _mode == AzkarMode.morning
+                    ? colors.background
+                    : colors.accentText,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProgress(_ModeColors colors, {Key? key}) {
+    return Padding(
+      key: key,
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
+      child: Column(
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Text('Ø§Ù„ØªÙ‚Ø¯Ù…',
+                  style: TextStyle(
+                      color: colors.accentText.withValues(alpha: 0.8), fontSize: 18)),
+              const Spacer(),
+              Text(_progressText,
+                  textDirection: TextDirection.ltr,
+                  style: TextStyle(
+                      color: colors.accentText.withValues(alpha: 0.8), fontSize: 18)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Directionality(
+            textDirection: TextDirection.rtl,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: _progress,
+                minHeight: 7,
+                backgroundColor: colors.border.withValues(alpha: 0.4),
+                valueColor: AlwaysStoppedAnimation<Color>(colors.accent),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAzkarList(_ModeColors colors) {
+    final items = _activeAzkarCounts;
+    return ListView.builder(
+      key: const PageStorageKey('azkar_list'),
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 120),
+      itemCount: azkarData.length,
+      itemBuilder: (context, index) {
+        final item = azkarData[index];
+        final currentCount = items[index];
+        final target = _targetForAzkar(index);
+        final done = currentCount >= target;
+        final text =
+            _mode == AzkarMode.morning ? (item.s ?? '') : (item.e ?? item.s ?? '');
+        final note = _mode == AzkarMode.morning ? item.ns : item.ne;
+
+        return _buildZikrCard(
+          cardKey: _azkarKeys[index],
+          colors: colors,
+          index: index,
+          text: text,
+          note: note ?? '',
+          fadl: item.fadl ?? '',
+          topText: index == 2
+          ? 'Ø£ÙŽØ¹ÙÙˆØ°Ù Ø¨ÙØ§Ù„Ù„Ù‡Ù Ù…ÙÙ†ÙŽ Ø§Ù„Ø´ÙŽÙ‘ÙŠÙ’Ø·ÙŽØ§Ù†Ù Ø§Ù„Ø±ÙŽÙ‘Ø¬ÙÙŠÙ…Ù'
+              : '',
+          currentCount: currentCount,
+          targetCount: target,
+          done: done,
+          onTap: () => _incrementAzkar(index),
+        );
+      },
+    );
+  }
+
+  Widget _buildHifzList(_ModeColors colors) {
+    return ListView.builder(
+      key: const PageStorageKey('hifz_list'),
+      controller: _hifzScrollController,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 120),
+      itemCount: hifzData.length,
+      itemBuilder: (context, index) {
+        final item = hifzData[index];
+        final currentCount = _hifzCounts[index];
+        final target = _targetForHifz(index);
+        final done = currentCount >= target;
+        final source = item.source ?? '';
+
+        String topText = '';
+        String displayText = item.text ?? item.s ?? '';
+        const basmalaTag = 'ï´¿Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ùï´¾';
+
+        if (source.contains('Ø§Ù„ÙƒØ±Ø³ÙŠ')) {
+          topText =
+              'Ø£ÙŽØ¹ÙÙˆØ°Ù Ø¨ÙØ§Ù„Ù„Ù‡Ù Ù…ÙÙ†ÙŽ Ø§Ù„Ø´ÙŽÙ‘ÙŠÙ’Ø·ÙŽØ§Ù†Ù Ø§Ù„Ø±ÙŽÙ‘Ø¬ÙÙŠÙ…Ù\nï´¿Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ùï´¾';
+        } else if (source.contains('Ø§Ù„Ø¨Ù‚Ø±Ø©') || source.contains('Ø§Ù„Ø¨Ø±ÙˆØ¬')) {
+          topText = 'ï´¿Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ùï´¾';
+        } else if (source.contains('Ø§Ù„Ø¥Ø®Ù„Ø§Øµ') ||
+            source.contains('Ø§Ù„ÙÙ„Ù‚') ||
+            source.contains('Ø§Ù„Ù†Ø§Ø³')) {
+          if (displayText.startsWith(basmalaTag)) {
+            topText = basmalaTag;
+            displayText = displayText.substring(basmalaTag.length).trimLeft();
+          }
+        }
+
+        return _buildZikrCard(
+          cardKey: _hifzKeys[index],
+          colors: colors,
+          index: index,
+          text: displayText,
+          note: source,
+          fadl: '',
+          topText: topText,
+          currentCount: currentCount,
+          targetCount: target,
+          done: done,
+          onTap: () => _incrementHifz(index),
+        );
+      },
+    );
+  }
+
+  Widget _buildZikrCard({
+    required GlobalKey cardKey,
+    required _ModeColors colors,
+    required int index,
+    required String text,
+    required String note,
+    required String fadl,
+    required String topText,
+    required int currentCount,
+    required int targetCount,
+    required bool done,
+    required VoidCallback onTap,
+  }) {
+    final compactDots = targetCount >= 7;
+    final dotSize = targetCount >= 30 ? 7.0 : (compactDots ? 8.0 : 9.0);
+    final dotSpacing = targetCount >= 30 ? 5.0 : 6.0;
+    final dotsMaxWidth = targetCount >= 30 ? 170.0 : 150.0;
+
+    return AnimatedOpacity(
+      key: cardKey,
+      duration: const Duration(milliseconds: 250),
+      opacity: done ? 0.55 : 1,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: colors.card,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: colors.border),
+          boxShadow: [
+            BoxShadow(
+              color: colors.accent
+                  .withValues(alpha: _mode == AzkarMode.evening ? 0.08 : 0.05),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text('${index + 1}',
+                      style: TextStyle(
+                          color: colors.accentText.withValues(alpha: 0.35))),
+                  const Spacer(),
+                  if (done)
+                    Row(
+                      children: [
+                        Text('Ø§ÙƒØªÙ…Ù„',
+                            style: GoogleFonts.scheherazadeNew(
+                              color: const Color(0xFF5EB36C),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            )),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.check,
+                            size: 18, color: Color(0xFF5EB36C)),
+                      ],
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (topText.isNotEmpty) ...[
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    topText,
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    style: GoogleFonts.scheherazadeNew(
+                      fontSize: 14 * _fontSize,
+                      height: 1.7,
+                      color: colors.accentText.withValues(alpha: 0.55),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+              Text(
+                text,
+                textAlign: TextAlign.justify,
+                textDirection: TextDirection.rtl,
+                style: GoogleFonts.scheherazadeNew(
+                  fontSize: 18 * _fontSize,
+                  height: 1.95,
+                  color: colors.text,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (note.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    note,
+                    textAlign: TextAlign.right,
+                    textDirection: TextDirection.rtl,
+                    style: GoogleFonts.amiri(
+                      color: colors.accentText.withValues(alpha: 0.7),
+                      fontSize: 14 * _fontSize,
+                    ),
+                  ),
+                ),
+              ],
+              if (fadl.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showFadlPopup(fadl),
+                    icon: const Icon(Icons.auto_awesome),
+                    label: const Text('ÙØ¶Ù„ Ø§Ù„Ø°ÙƒØ±'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colors.accentText,
+                      side: BorderSide(color: colors.border),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(999)),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                textDirection: TextDirection.ltr,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  _buildTapButton(colors, done, onTap),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Row(
+                          textDirection: TextDirection.rtl,
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Text(
+                              '$targetCount / $currentCount',
+                              textDirection: TextDirection.ltr,
+                              style: TextStyle(
+                                color: colors.accentText,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            ConstrainedBox(
+                              constraints:
+                                  BoxConstraints(maxWidth: dotsMaxWidth),
+                              child: Wrap(
+                                spacing: dotSpacing,
+                                runSpacing: dotSpacing,
+                                alignment: WrapAlignment.start,
+                                children: List.generate(targetCount, (dotIdx) {
+                                  final filled = dotIdx < currentCount;
+                                  return AnimatedContainer(
+                                    duration:
+                                        const Duration(milliseconds: 160),
+                                    width: dotSize,
+                                    height: dotSize,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: filled
+                                          ? colors.accent
+                                          : Colors.transparent,
+                                      border: Border.all(
+                                        color: colors.accent.withValues(alpha: 0.8),
+                                        width: targetCount >= 30 ? 1.0 : 1.2,
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTapButton(_ModeColors colors, bool done, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: done ? null : onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        width: 68,
+        height: 68,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: done
+              ? const Color(0xFF4CAF50).withValues(alpha: 0.12)
+              : Colors.transparent,
+          border: Border.all(
+            color: done
+                ? const Color(0xFF4CAF50)
+                : colors.accent.withValues(alpha: 0.78),
+            width: 2,
+          ),
+        ),
+        child: Center(
+          child: done
+              ? const Icon(Icons.check_rounded,
+                  color: Color(0xFF4CAF50), size: 30)
+              : const Text('ðŸ™Œ', style: TextStyle(fontSize: 26)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomBar(_ModeColors colors) {
+    final hifzComplete = _hifzCounts
+        .asMap()
+        .entries
+        .every((e) => e.value >= _targetForHifz(e.key));
+    final azkarComplete = _activeAzkarCounts
+        .asMap()
+        .entries
+        .every((e) => e.value >= _targetForAzkar(e.key));
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: 72,
+        decoration: BoxDecoration(
+          color: colors.background,
+          border: Border(top: BorderSide(color: colors.border)),
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            _buildTabButton(
+              title: _rootTab == RootTab.azkar
+                  ? (_mode == AzkarMode.morning
+                      ? 'Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­'
+                      : 'Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡')
+                  : 'Ø§Ù„Ø£Ø°ÙƒØ§Ø±',
+              icon: Icons.volunteer_activism_rounded,
+              active: _rootTab == RootTab.azkar,
+              colors: colors,
+              done: azkarComplete,
+              onTap: () => setState(() => _rootTab = RootTab.azkar),
+            ),
+            _buildTabButton(
+              title: 'Ø¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸',
+              icon: Icons.shield_moon_rounded,
+              active: _rootTab == RootTab.hifz,
+              colors: colors,
+              done: hifzComplete,
+              onTap: () => setState(() => _rootTab = RootTab.hifz),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabButton({
+    required String title,
+    required IconData icon,
+    required bool active,
+    required bool done,
+    required _ModeColors colors,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(icon,
+                    color: active
+                        ? colors.accentText
+                        : colors.accentText.withValues(alpha: 0.45)),
+                if (done)
+                  const Positioned(
+                    top: -4,
+                    left: -6,
+                    child: CircleAvatar(
+                      radius: 7,
+                      backgroundColor: Color(0xFF4CAF50),
+                      child: Icon(Icons.check, color: Colors.white, size: 10),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.scheherazadeNew(
+                fontSize: 16,
+                color: active
+                    ? colors.accentText
+                    : colors.accentText.withValues(alpha: 0.45),
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openBottomSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _modeColors.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModal) {
+            Widget page;
+            switch (_sheetTab) {
+              case SheetTab.streaks:
+                page = _buildStreaksPage(_modeColors);
+                break;
+              case SheetTab.calendar:
+                page = _buildCalendarPage(_modeColors, setModal);
+                break;
+              case SheetTab.tasbih:
+                page = _buildTasbihPage(_modeColors, setModal);
+                break;
+              case SheetTab.settings:
+                page = _buildSettingsPage(_modeColors, setModal);
+                break;
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: _modeColors.border,
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        _sheetTabBtn('Ø§Ù„Ø³Ù„Ø§Ø³Ù„', SheetTab.streaks, setModal,
+                            icon: Icons.local_fire_department_rounded),
+                        _sheetTabBtn('Ø§Ù„ØªÙ‚ÙˆÙŠÙ…', SheetTab.calendar, setModal,
+                            icon: Icons.calendar_month_rounded),
+                        _sheetTabBtn('Ø§Ù„Ø³Ø¨Ø­Ø©', SheetTab.tasbih, setModal,
+                            icon: Icons.brightness_medium_rounded),
+                        _sheetTabBtn('Ø§Ù„Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª', SheetTab.settings, setModal,
+                            icon: Icons.settings_rounded),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Flexible(
+                      child: SingleChildScrollView(child: page),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _sheetTabBtn(String text, SheetTab tab, StateSetter setModal,
+      {IconData? icon}) {
+    final active = _sheetTab == tab;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setModal(() => _sheetTab = tab),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: active
+                ? _modeColors.chipSelected
+                : _modeColors.chipBg.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            textDirection: TextDirection.rtl,
+            children: [
+              Text(
+                text,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.scheherazadeNew(
+                  color: _modeColors.accentText,
+                  fontSize: 18,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+              if (icon != null) ...[
+                const SizedBox(width: 3),
+                Icon(
+                  icon,
+                  size: 18,
+                  color: _modeColors.accentText,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStreaksPage(_ModeColors colors) {
+    Widget box(String title, String key, IconData icon) {
+      final entry = _streaks[key] ?? {'streak': 0, 'best': 0};
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: colors.card,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: colors.border),
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            Expanded(
+              child: Row(
+                textDirection: TextDirection.rtl,
+                children: [
+                  Expanded(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        Text(
+                          title,
+                          textAlign: TextAlign.right,
+                          style: GoogleFonts.scheherazadeNew(
+                              fontSize: 24, color: colors.text),
+                        ),
+                        const SizedBox(width: 3),
+                        Icon(
+                          icon,
+                          size: 22,
+                          color: colors.accentText.withValues(alpha: 0.9),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              children: [
+                Text('${entry['streak'] ?? 0}',
+                    style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: colors.accentText)),
+                Text('Ø§Ù„Ø­Ø§Ù„ÙŠØ©',
+                    style:
+                        TextStyle(color: colors.accentText.withValues(alpha: 0.65))),
+              ],
+            ),
+            const SizedBox(width: 16),
+            Column(
+              children: [
+                Text('${entry['best'] ?? 0}',
+                    style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: colors.accentText)),
+                Text('Ø§Ù„Ø£Ø·ÙˆÙ„',
+                    style:
+                        TextStyle(color: colors.accentText.withValues(alpha: 0.65))),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        box('Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­', 'morning', Icons.wb_sunny_rounded),
+        box('Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡', 'evening', Icons.nights_stay_rounded),
+        box('Ø¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸', 'hifz', Icons.shield_rounded),
+      ],
+    );
+  }
+
+  Widget _buildCalendarPage(_ModeColors colors, StateSetter setModal) {
+    final monthStart =
+        DateTime(_calendarMonth.year, _calendarMonth.month, 1);
+    final daysInMonth =
+        DateTime(_calendarMonth.year, _calendarMonth.month + 1, 0).day;
+    final leadingEmpty = (6 - monthStart.weekday) % 7;
+    final totalCells = leadingEmpty + daysInMonth;
+    final trailingEmpty = (7 - (totalCells % 7)) % 7;
+
+    const monthNames = [
+      'ÙŠÙ†Ø§ÙŠØ±','ÙØ¨Ø±Ø§ÙŠØ±','Ù…Ø§Ø±Ø³','Ø£Ø¨Ø±ÙŠÙ„','Ù…Ø§ÙŠÙˆ','ÙŠÙˆÙ†ÙŠÙˆ',
+      'ÙŠÙˆÙ„ÙŠÙˆ','Ø£ØºØ³Ø·Ø³','Ø³Ø¨ØªÙ…Ø¨Ø±','Ø£ÙƒØªÙˆØ¨Ø±','Ù†ÙˆÙÙ…Ø¨Ø±','Ø¯ÙŠØ³Ù…Ø¨Ø±',
+    ];
+    const weekDays = ['Ø³Ø¨Øª','Ø¬Ù…Ø¹','Ø®Ù…ÙŠ','Ø£Ø±Ø¨','Ø«Ù„Ø§','Ø§Ø«Ù†','Ø£Ø­Ø¯'];
+
+    Widget legendDot(Color color, String label) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+                width: 10,
+                height: 10,
+                decoration:
+                    BoxDecoration(color: color, shape: BoxShape.circle)),
+            const SizedBox(width: 4),
+            Text(label,
+                style:
+                    TextStyle(color: colors.accentText.withValues(alpha: 0.8))),
+          ],
+        );
+
+    return Column(
+      children: [
+        Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            IconButton(
+              onPressed: () => setModal(() {
+                _calendarMonth =
+                    DateTime(_calendarMonth.year, _calendarMonth.month + 1, 1);
+              }),
+              icon: Icon(Icons.chevron_right_rounded, color: colors.accentText),
+            ),
+            Expanded(
+              child: Text(
+                '${monthNames[_calendarMonth.month - 1]} ${_calendarMonth.year}',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.scheherazadeNew(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: colors.title,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: () => setModal(() {
+                _calendarMonth =
+                    DateTime(_calendarMonth.year, _calendarMonth.month - 1, 1);
+              }),
+              icon:
+                  Icon(Icons.chevron_left_rounded, color: colors.accentText),
+            ),
+          ],
+        ),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 14,
+          runSpacing: 8,
+          children: [
+            legendDot(const Color(0xFFF59E0B), 'Ø§Ù„ØµØ¨Ø§Ø­'),
+            legendDot(const Color(0xFF8B5CF6), 'Ø§Ù„Ù…Ø³Ø§Ø¡'),
+            legendDot(const Color(0xFF3B82F6), 'Ø§Ù„Ø­ÙØ¸'),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Directionality(
+          textDirection: TextDirection.rtl,
+          child: GridView.builder(
+          itemCount:
+              weekDays.length + leadingEmpty + daysInMonth + trailingEmpty,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            mainAxisExtent: 72,
+          ),
+          itemBuilder: (context, index) {
+            if (index < weekDays.length) {
+              return Center(
+                child: Text(weekDays[index],
+                    style: TextStyle(
+                        color: colors.accentText.withValues(alpha: 0.6))),
+              );
+            }
+
+            final dayIndex = index - weekDays.length;
+            if (dayIndex < leadingEmpty ||
+                dayIndex >= leadingEmpty + daysInMonth) {
+              return const SizedBox.shrink();
+            }
+
+            final day = dayIndex - leadingEmpty + 1;
+            final date =
+                DateTime(_calendarMonth.year, _calendarMonth.month, day);
+            final dateKey = _dateStr(date);
+            final entry = _history[dateKey] ??
+                {'morning': false, 'evening': false, 'hifz': false};
+            final isToday = _sameDate(date, DateTime.now());
+
+            List<Widget> dots = [];
+            if (entry['morning'] == true) {
+              dots.add(_calendarDot(const Color(0xFFF59E0B)));
+            }
+            if (entry['evening'] == true) {
+              dots.add(_calendarDot(const Color(0xFF8B5CF6)));
+            }
+            if (entry['hifz'] == true) {
+              dots.add(_calendarDot(const Color(0xFF3B82F6)));
+            }
+
+            return Container(
+              margin: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isToday ? colors.accent : Colors.transparent,
+                  width: isToday ? 1.4 : 0,
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('$day', style: TextStyle(color: colors.text)),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 2,
+                    runSpacing: 2,
+                    alignment: WrapAlignment.center,
+                    children: dots,
+                  ),
+                ],
+              ),
+            );
+          },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _calendarDot(Color color) => Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      );
+
+  Widget _buildTasbihPage(_ModeColors colors, StateSetter setModal) {
+    final cycleCount = _tasbihTarget <= 0
+        ? 0
+        : _tasbihCount <= 0
+            ? 0
+            : ((_tasbihCount - 1) % _tasbihTarget) + 1;
+    final progress = _tasbihTarget == 0
+        ? 1.0
+        : (cycleCount / _tasbihTarget).clamp(0, 1).toDouble();
+
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: () async {
+            final reachedGoal =
+                _tasbihTarget > 0 && _tasbihCount + 1 == _tasbihTarget;
+            setModal(() {
+              if (_tasbihTarget > 0 && _tasbihCount >= _tasbihTarget) {
+                _tasbihCount = 1;
+              } else {
+                _tasbihCount++;
+              }
+            });
+            if (reachedGoal) {
+              await _vibrate([0, 40, 35, 70, 35, 120]);
+            } else {
+              await _vibrate();
+            }
+            await _saveState();
+          },
+          child: Container(
+            width: 190,
+            height: 190,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colors.card,
+              border: Border.all(color: colors.border, width: 3),
+              boxShadow: [
+                BoxShadow(
+                  color: colors.accent.withValues(alpha: 0.18),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('$_tasbihCount',
+                    style: TextStyle(
+                        fontSize: 54,
+                        fontWeight: FontWeight.bold,
+                        color: colors.accentText)),
+                const SizedBox(height: 6),
+                Text('Ø§Ø¶ØºØ· Ù„Ù„ØªØ³Ø¨ÙŠØ­',
+                    style: TextStyle(
+                        color: colors.accentText.withValues(alpha: 0.7))),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _presetBtn('Ù£Ù£', 33, colors, setModal),
+            const SizedBox(width: 8),
+            _presetBtn('Ø­Ø±', 0, colors, setModal),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Directionality(
+          textDirection: TextDirection.rtl,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 7,
+              backgroundColor: colors.border.withValues(alpha: 0.5),
+              valueColor: AlwaysStoppedAnimation<Color>(colors.accent),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _tasbihTarget == 0 ? 'ÙˆØ¶Ø¹ Ø­Ø±' : '$_tasbihTarget / $_tasbihCount',
+          style: TextStyle(color: colors.accentText, fontSize: 18),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: () async {
+            setModal(() => _tasbihCount = 0);
+            await _saveState();
+          },
+          icon: const Icon(Icons.restart_alt_rounded),
+          label: const Text('Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ø¨Ø¯Ø¡'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: colors.accentText,
+            side: BorderSide(color: colors.border),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _presetBtn(
+      String label, int target, _ModeColors colors, StateSetter setModal) {
+    final active = _tasbihTarget == target;
+    return ChoiceChip(
+      label: Text(label),
+      selected: active,
+      onSelected: (_) async {
+        setModal(() {
+          _tasbihTarget = target;
+          _tasbihCount = 0;
+        });
+        await _saveState();
+      },
+      selectedColor: colors.chipSelected,
+      side: BorderSide(color: colors.border),
+      labelStyle: TextStyle(
+        color: active ? colors.accentText : colors.accentText.withValues(alpha: 0.9),
+      ),
+      backgroundColor: colors.chipBg,
+    );
+  }
+
+  Widget _buildSettingsPage(_ModeColors colors, StateSetter setModal) {
+    // â”€â”€ toggleRow ÙŠÙ‚Ø±Ø£ Ø§Ù„Ù‚ÙŠÙ…Ø© Ø¹Ø¨Ø± getter Ù„Ø§ snapshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    Widget toggleRow(
+      String title,
+      String subtitle,
+      bool Function() getValue,
+      Future<void> Function() onToggle,
+      {IconData? titleIcon}
+    ) {
+      return Directionality(
+        textDirection: TextDirection.rtl,
+        child: SwitchListTile(
+          value: getValue(),
+          onChanged: (_) async {
+            await onToggle();
+            if (mounted) setModal(() {});
+          },
+          activeThumbColor: colors.accent,
+          inactiveTrackColor: colors.chipSelected,
+          inactiveThumbColor: colors.chipBg,
+          title: Align(
+            alignment: Alignment.centerRight,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              textDirection: TextDirection.rtl,
+              children: [
+                Text(title,
+                    textAlign: TextAlign.right,
+                    style: GoogleFonts.scheherazadeNew(
+                        fontSize: 22, color: colors.text)),
+                if (titleIcon != null) ...[
+                  const SizedBox(width: 3),
+                  Icon(
+                    titleIcon,
+                    size: 22,
+                    color: colors.accentText.withValues(alpha: 0.9),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          subtitle: Text(subtitle,
+              textAlign: TextAlign.right,
+              style: GoogleFonts.amiri(
+                  color: colors.accentText.withValues(alpha: 0.7))),
+        ),
+      );
+    }
+
+    Widget unavailableSettingRow(
+      String title,
+      String subtitle, {
+      IconData? titleIcon,
+    }) {
+      return Directionality(
+        textDirection: TextDirection.rtl,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          title: Align(
+            alignment: Alignment.centerRight,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              textDirection: TextDirection.rtl,
+              children: [
+                Text(
+                  title,
+                  textAlign: TextAlign.right,
+                  style: GoogleFonts.scheherazadeNew(
+                    fontSize: 22,
+                    color: colors.text,
+                  ),
+                ),
+                if (titleIcon != null) ...[
+                  const SizedBox(width: 3),
+                  Icon(
+                    titleIcon,
+                    size: 22,
+                    color: colors.accentText.withValues(alpha: 0.9),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  subtitle,
+                  textAlign: TextAlign.right,
+                  style: GoogleFonts.amiri(
+                    color: colors.accentText.withValues(alpha: 0.7),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'لا تعمل على نسخة الويب',
+                  textAlign: TextAlign.right,
+                  style: GoogleFonts.amiri(
+                    fontSize: 15,
+                    color: colors.accent,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // â”€â”€ ØµÙ ÙˆÙ‚Øª Ø§Ù„ØµÙ„Ø§Ø© Ø§Ù„ÙˆØ§Ø­Ø¯ (ÙØ¬Ø± Ø£Ùˆ Ù…ØºØ±Ø¨) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    Widget prayerTimeRow({
+      required IconData titleIcon,
+      required String label,
+      required int hour,
+      required int minute,
+      required bool hasOverride,
+      required bool isFajr,
+    }) {
+      final timeStr = _fmtTime(hour, minute);
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: colors.chipBg,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: hasOverride
+                ? colors.accent.withValues(alpha: 0.7)
+                : colors.border,
+            width: hasOverride ? 1.4 : 1.0,
+          ),
+        ),
+        child: Row(
+          textDirection: TextDirection.rtl,
+          children: [
+            // â”€â”€ Ø§Ù„ÙˆÙ‚Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      Text(
+                        label,
+                        textAlign: TextAlign.right,
+                        style: GoogleFonts.scheherazadeNew(
+                          fontSize: 18,
+                          color: colors.text,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 3),
+                      Icon(
+                        titleIcon,
+                        size: 21,
+                        color: colors.accentText.withValues(alpha: 0.9),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      Text(
+                        timeStr,
+                        textDirection: TextDirection.ltr,
+                        style: GoogleFonts.scheherazadeNew(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: colors.accentText,
+                        ),
+                      ),
+                      if (hasOverride) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: colors.accent.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(99),
+                            border: Border.all(
+                                color: colors.accent.withValues(alpha: 0.4)),
+                          ),
+                          child: Text(
+                            'ÙŠØ¯ÙˆÙŠ',
+                            style: GoogleFonts.amiri(
+                              fontSize: 13,
+                              color: colors.accent,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // â”€â”€ Ø£Ø²Ø±Ø§Ø± Ø§Ù„ØªØ¹Ø¯ÙŠÙ„ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // Ø²Ø± ØªØ¹Ø¯ÙŠÙ„ ÙŠØ¯ÙˆÙŠ
+            IconButton(
+              tooltip: 'Ø¶Ø¨Ø· ÙŠØ¯ÙˆÙŠ',
+              onPressed: () => _pickPrayerTime(
+                isFajr: isFajr,
+                setModal: setModal,
+              ),
+              icon: Icon(
+                Icons.edit_rounded,
+                size: 22,
+                color: colors.accentText.withValues(alpha: 0.75),
+              ),
+            ),
+            // Ø²Ø± Ø¥Ø¹Ø§Ø¯Ø© Ø¶Ø¨Ø· Ø¥Ù„Ù‰ GPS (ÙŠØ¸Ù‡Ø± ÙÙ‚Ø· Ø¥Ù† ÙˆÙØ¬Ø¯ override)
+            if (hasOverride)
+              IconButton(
+                tooltip: 'Ø¥Ø¹Ø§Ø¯Ø© Ø¶Ø¨Ø· GPS',
+                onPressed: () => _resetPrayerTimeToGps(
+                  isFajr: isFajr,
+                  setModal: setModal,
+                ),
+                icon: Icon(
+                  Icons.gps_fixed_rounded,
+                  size: 22,
+                  color: colors.accent,
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    // â”€â”€ Ù„ÙˆØ­Ø© Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø© Ø§Ù„ÙƒØ§Ù…Ù„Ø© â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    Widget prayerTimesPanel() {
+      final hasAnyTime =
+          _savedFajrHour != null || _savedMaghribHour != null;
+
+      return Container(
+        margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        decoration: BoxDecoration(
+          color: colors.card,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: colors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // â”€â”€ Ø§Ù„Ø¹Ù†ÙˆØ§Ù† â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Text(
+                      'Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø©',
+                      style: GoogleFonts.scheherazadeNew(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: colors.title,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Icon(Icons.access_time_rounded,
+                        color: colors.accentText, size: 20),
+                  ],
+                ),
+                const Spacer(),
+                if (!hasAnyTime)
+                  Text(
+                    'ÙØ¹Ù‘Ù„ Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª Ù„Ù„Ø¬Ù„Ø¨',
+                    style: GoogleFonts.amiri(
+                      fontSize: 14,
+                      color: colors.accentText.withValues(alpha: 0.55),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            if (!hasAnyTime)
+              // â”€â”€ Ø­Ø§Ù„Ø© Ø¹Ø¯Ù… ÙˆØ¬ÙˆØ¯ Ø¨ÙŠØ§Ù†Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Ù„Ù… ÙŠØªÙ… Ø¬Ù„Ø¨ Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø© Ø¨Ø¹Ø¯.\nÙØ¹Ù‘Ù„ "ØªØ°ÙƒÙŠØ± Ø¨Ø§Ù„Ø£Ø°ÙƒØ§Ø±" Ø£Ø¹Ù„Ø§Ù‡ Ù„Ù„Ø¬Ù„Ø¨ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.amiri(
+                    fontSize: 16,
+                    height: 1.7,
+                    color: colors.accentText.withValues(alpha: 0.6),
+                  ),
+                ),
+              )
+            else ...[
+              // â”€â”€ ØµÙ Ø§Ù„ÙØ¬Ø± â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              prayerTimeRow(
+                titleIcon: Icons.wb_sunny_rounded,
+                label: 'Ø§Ù„ÙØ¬Ø±',
+                hour: _effectiveFajrHour,
+                minute: _effectiveFajrMinute,
+                hasOverride: _hasFajrOverride,
+                isFajr: true,
+              ),
+              // â”€â”€ ØµÙ Ø§Ù„Ù…ØºØ±Ø¨ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              prayerTimeRow(
+                titleIcon: Icons.nights_stay_rounded,
+                label: 'Ø§Ù„Ù…ØºØ±Ø¨',
+                hour: _effectiveMaghribHour,
+                minute: _effectiveMaghribMinute,
+                hasOverride: _hasMaghribOverride,
+                isFajr: false,
+              ),
+              // â”€â”€ ØªÙ„Ù…ÙŠØ­ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded,
+                        size: 14,
+                        color: colors.accentText.withValues(alpha: 0.45)),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Text(
+                        'Ø§Ø¶ØºØ· âœï¸ Ù„Ø¶Ø¨Ø· Ø§Ù„ÙˆÙ‚Øª ÙŠØ¯ÙˆÙŠØ§Ù‹ØŒ ÙˆØ§Ø¶ØºØ· ðŸ“¡ Ù„Ù„Ø¹ÙˆØ¯Ø© Ø¥Ù„Ù‰ GPS',
+                        style: GoogleFonts.amiri(
+                          fontSize: 13,
+                          color: colors.accentText.withValues(alpha: 0.45),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        if (kIsWeb)
+          unavailableSettingRow(
+            'تذكير بالأذكار',
+            'إشعارات بأوقات الفجر والمغرب بحسب موقعك',
+            titleIcon: Icons.notifications_active_rounded,
+          )
+        else ...[
+          toggleRow(
+            'ØªØ°ÙƒÙŠØ± Ø¨Ø§Ù„Ø£Ø°ÙƒØ§Ø±',
+            'Ø¥Ø´Ø¹Ø§Ø±Ø§Øª Ø¨Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ÙØ¬Ø± ÙˆØ§Ù„Ù…ØºØ±Ø¨ Ø¨Ø­Ø³Ø¨ Ù…ÙˆÙ‚Ø¹Ùƒ',
+            () => _notificationsEnabled,
+            _toggleNotifications,
+            titleIcon: Icons.notifications_active_rounded,
+          ),
+          prayerTimesPanel(),
+        ],
+        const Divider(height: 1),
+        const SizedBox(height: 4),
+        if (kIsWeb)
+          unavailableSettingRow(
+            'الاهتزاز',
+            'اهتزاز عند كل تسبيحة',
+            titleIcon: Icons.vibration_rounded,
+          )
+        else
+          toggleRow(
+            'Ø§Ù„Ø§Ù‡ØªØ²Ø§Ø²',
+            'Ø§Ù‡ØªØ²Ø§Ø² Ø¹Ù†Ø¯ ÙƒÙ„ ØªØ³Ø¨ÙŠØ­Ø©',
+            () => _vibrationEnabled,
+            () async {
+              setState(() => _vibrationEnabled = !_vibrationEnabled);
+              await _saveState();
+              if (_vibrationEnabled) await _vibrate([25, 20, 25]);
+            },
+            titleIcon: Icons.vibration_rounded,
+          ),
+        toggleRow(
+          'ØªÙ…Ø±ÙŠØ± ØªÙ„Ù‚Ø§Ø¦ÙŠ',
+          'Ø§Ù„Ø§Ù†ØªÙ‚Ø§Ù„ Ù„Ù„Ø°ÙƒØ± Ø§Ù„ØªØ§Ù„ÙŠ Ø¨Ø¹Ø¯ Ø§Ù„Ø¥ØªÙ…Ø§Ù…',
+          () => _autoScroll,
+          () async {
+            setState(() => _autoScroll = !_autoScroll);
+            await _saveState();
+          },
+          titleIcon: Icons.vertical_align_bottom_rounded,
+        ),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          titleAlignment: ListTileTitleAlignment.center,
+          leading: Directionality(
+            textDirection: TextDirection.ltr,
+            child: Wrap(
+              spacing: 6,
+              children: [
+                _fontChip('Øµ', 0.95, colors, setModal),
+                _fontChip('Ù…', 1.35, colors, setModal),
+                _fontChip('Ùƒ', 1.85, colors, setModal),
+              ],
+            ),
+          ),
+          title: Align(
+            alignment: Alignment.centerRight,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              textDirection: TextDirection.rtl,
+              children: [
+                Text('Ø­Ø¬Ù… Ø§Ù„Ø®Ø·',
+                    textAlign: TextAlign.right,
+                    style: GoogleFonts.scheherazadeNew(
+                        fontSize: 22, color: colors.text)),
+                const SizedBox(width: 3),
+                Icon(
+                  Icons.text_fields_rounded,
+                  size: 22,
+                  color: colors.accentText.withValues(alpha: 0.9),
+                ),
+              ],
+            ),
+          ),
+          subtitle: Text('ØµØºÙŠØ± / Ù…ØªÙˆØ³Ø· / ÙƒØ¨ÙŠØ±',
+              textAlign: TextAlign.right,
+              style: GoogleFonts.amiri(
+                  color: colors.accentText.withValues(alpha: 0.7))),
+        ),
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          onTap: _showAboutAppPopup,
+          leading: Icon(
+            Icons.info_outline_rounded,
+            color: colors.accentText.withValues(alpha: 0.85),
+          ),
+          title: Text('Ø­ÙˆÙ„ Ø§Ù„ØªØ·Ø¨ÙŠÙ‚',
+              textAlign: TextAlign.right,
+              style: GoogleFonts.scheherazadeNew(
+                  fontSize: 22, color: colors.text)),
+          subtitle: Text('Ù†Ø¨Ø°Ø© Ù…Ø®ØªØµØ±Ø© Ø¹Ù† Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ ÙˆÙ…ØµØ¯Ø± Ø§Ù„Ø£Ø°ÙƒØ§Ø±',
+              textAlign: TextAlign.right,
+              style: GoogleFonts.amiri(
+                  color: colors.accentText.withValues(alpha: 0.7))),
+        ),
+      ],
+    );
+  }
+
+  Widget _fontChip(
+      String label, double size, _ModeColors colors, StateSetter setModal) {
+    final active = (_fontSize - size).abs() < 0.01;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: TextStyle(fontSize: label == 'Ù…' ? 22 : 20),
+      ),
+      selected: active,
+      onSelected: (_) async {
+        setState(() => _fontSize = size);
+        setModal(() {});
+        await _saveState();
+      },
+      selectedColor: colors.chipSelected,
+      side: BorderSide(color: colors.border),
+      labelStyle: TextStyle(
+        color: active ? colors.accentText : colors.accentText.withValues(alpha: 0.9),
+      ),
+      backgroundColor: colors.chipBg,
+    );
+  }
+
+  Future<void> _showFadlPopup(String text) async {
+    final normalizedText = text.trim();
+    final fadlText = normalizedText.isEmpty
+        ? normalizedText
+        : RegExp(r'[\.!\?ØŸÛ”]$').hasMatch(normalizedText)
+            ? normalizedText
+            : '$normalizedText.';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _modeColors.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 42,
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: _modeColors.border,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              Text(
+                'ÙØ¶Ù„ Ø§Ù„Ø°ÙƒØ±',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.scheherazadeNew(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: _modeColors.title,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                fadlText,
+                textAlign: TextAlign.right,
+                textDirection: TextDirection.rtl,
+                style: GoogleFonts.scheherazadeNew(
+                  fontSize: 24,
+                  height: 1.8,
+                  color: _modeColors.text,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAboutAppPopup() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _modeColors.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 42,
+                  height: 5,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(
+                    color: _modeColors.border,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+                Text(
+                  'Ø­ÙˆÙ„ Ø§Ù„ØªØ·Ø¨ÙŠÙ‚',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.scheherazadeNew(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: _modeColors.title,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'ØªØ·Ø¨ÙŠÙ‚ Ø£Ø°ÙƒØ§Ø± ÙŠØ³Ø§Ø¹Ø¯Ùƒ Ø¹Ù„Ù‰ Ø§Ù„Ù…Ø­Ø§ÙØ¸Ø© Ø¹Ù„Ù‰ Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­ ÙˆØ§Ù„Ù…Ø³Ø§Ø¡ ÙˆØ¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸.\n\n'
+                  'Ø¬ÙÙ…Ø¹Øª Ù‡Ø°Ù‡ Ø§Ù„Ø£Ø°ÙƒØ§Ø± Ù…Ù† ÙƒØªØ§Ø¨ Ø§Ù„Ø¥Ù…Ø§Ù… Ø§Ù„Ù…ÙØ³Ù‘Ø± Ø§Ù„Ù…Ø­Ø¯Ù‘Ø« Ø§Ù„Ø´ÙŠØ® Ø¹Ø¨Ø¯ Ø§Ù„Ù„Ù‡ Ø³Ø±Ø§Ø¬ Ø§Ù„Ø¯ÙŠÙ† Ø§Ù„Ø­Ø³ÙŠÙ†ÙŠ Ø±Ø¶ÙŠ Ø§Ù„Ù„Ù‡ Ø¹Ù†Ù‡.\n\n'
+                  'Ù†Ø³Ø£Ù„ Ø§Ù„Ù„Ù‡ Ø£Ù† ÙŠÙ†ÙØ¹Ù†Ø§ Ø¨Ù‡ØŒ ÙˆÙŠØ¬Ø¹Ù„Ù‡ Ø®Ø§Ù„ØµÙ‹Ø§ Ù„ÙˆØ¬Ù‡Ù‡ Ø§Ù„ÙƒØ±ÙŠÙ…ØŒ ÙˆÙÙŠ Ù…ÙŠØ²Ø§Ù† Ø­Ø³Ù†Ø§ØªÙ†Ø§.',
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  style: GoogleFonts.amiri(
+                    fontSize: 22,
+                    height: 1.9,
+                    color: _modeColors.text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _sameDate(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+// â”€â”€â”€ Theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+class _ModeColors {
+  final Color background;
+  final Color card;
+  final Color text;
+  final Color border;
+  final Color accent;
+  final Color accentText;
+  final Color title;
+  final Color chipBg;
+  final Color chipSelected;
+  final Color buttonFg;
+
+  const _ModeColors({
+    required this.background,
+    required this.card,
+    required this.text,
+    required this.border,
+    required this.accent,
+    required this.accentText,
+    required this.title,
+    required this.chipBg,
+    required this.chipSelected,
+    required this.buttonFg,
+  });
+}
+
+// â”€â”€â”€ Stars â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+class _EveningStarsBackground extends StatelessWidget {
+  const _EveningStarsBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    const positions = <Offset>[
+      Offset(30, 90),   Offset(120, 40),  Offset(220, 120),
+      Offset(310, 60),  Offset(60, 220),  Offset(180, 260),
+      Offset(330, 310), Offset(80, 430),  Offset(260, 520),
+      Offset(40, 630),  Offset(320, 720),
+    ];
+
+    return IgnorePointer(
+      child: LayoutBuilder(
+        builder: (context, _) => Stack(
+          children: positions
+              .map((offset) => Positioned(
+                    left: offset.dx,
+                    top: offset.dy,
+                    child: Container(
+                      width: 4,
+                      height: 4,
+                      decoration: const BoxDecoration(
+                        color: Colors.white70,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ))
+              .toList(),
+        ),
+      ),
+    );
+  }
+}
+
