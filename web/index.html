@@ -109,7 +109,7 @@
     }
 
     window.addEventListener('flutter-first-frame', function () {
-      const minimumLoaderTime = 4500;
+      const minimumLoaderTime = 3000;
       const elapsed = Date.now() - loaderShownAt;
       const remaining = Math.max(0, minimumLoaderTime - elapsed);
       window.setTimeout(hideLoader, remaining);
