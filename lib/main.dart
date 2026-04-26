@@ -2546,7 +2546,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               ],
             ),
           ),
-          subtitle: Text('صغير / متوسط / كبير',
+          subtitle: Text('كبير / متوسط / صغير',
               textAlign: TextAlign.right,
               style: GoogleFonts.amiri(
                   color: colors.accentText.withValues(alpha: 0.7))),
