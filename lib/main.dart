@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,7 +12,7 @@ import 'vibration_helper.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await PrayerNotificationService.init();
-  // âœ… Ø¬Ù‡Ù‘Ø² WorkManager Ù„Ù€ auto-reset (ØµØ¨Ø§Ø­ Ø¹Ù†Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„ØŒ Ù…Ø³Ø§Ø¡ Ø¹Ù†Ø¯ Ø§Ù„ÙØ¬Ø±)
+  // ✅ جهّز WorkManager لـ auto-reset (صباح عند منتصف الليل، مساء عند الفجر)
   await initAndScheduleResets();
   runApp(const AzkarNativeApp());
 }
@@ -28,7 +28,7 @@ class AzkarNativeApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Ø£Ø°ÙƒØ§Ø±',
+      title: 'أذكار',
       locale: const Locale('ar'),
       theme: ThemeData(
         useMaterial3: true,
@@ -91,7 +91,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   int? _savedMaghribHour;
   int? _savedMaghribMinute;
 
-  // â”€â”€ Manual override: set by user via TimePicker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Manual override: set by user via TimePicker ──────────────────────────
   // null = use GPS value; non-null = user override
   int? _manualFajrHour;
   int? _manualFajrMinute;
@@ -127,19 +127,19 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   }
 
 
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // Ù…Ù†Ø·Ù‚ Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„Ù…Ù†Ø·Ù‚ÙŠ
+  // ═══════════════════════════════════════════════════════════════════════════
+  // منطق التاريخ المنطقي
   //
-  // â–¸ Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡: ÙˆÙ‚ØªÙ‡Ø§ Ù…Ù† Ø§Ù„Ù…ØºØ±Ø¨ Ø­ØªÙ‰ Ø§Ù„ÙØ¬Ø±.
-  //   Ø¥Ø°Ø§ ÙƒØ§Ù† Ø§Ù„ÙˆÙ‚Øª Ø¨Ø¹Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„ ÙˆÙ‚Ø¨Ù„ Ø§Ù„ÙØ¬Ø± â†’ Ø§Ù„ÙŠÙˆÙ… Ø§Ù„Ù…Ù†Ø·Ù‚ÙŠ = Ø£Ù…Ø³
-  //   (Ù„Ø£Ù† Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… Ù„Ø§ ÙŠØ²Ø§Ù„ ÙÙŠ Ø¬Ù„Ø³Ø© Ù…Ø³Ø§Ø¡ Ø§Ù„ÙŠÙˆÙ… Ø§Ù„Ø³Ø§Ø¨Ù‚).
-  //   Ù‡Ø°Ø§ ÙŠØ¶Ù…Ù†:
-  //     â€¢ Ø§Ù„Ø³Ù„Ø³Ù„Ø© Ù„Ø§ ØªÙ†Ù‚Ø·Ø¹ Ù„Ùˆ Ù‚Ø±Ø£ Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡ Ø¨Ø¹Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„
-  //     â€¢ Ø§Ù„ØªÙ‚ÙˆÙŠÙ… ÙŠÙØ¶Ø¹ Ø§Ù„Ù†Ù‚Ø·Ø© Ø¹Ù„Ù‰ Ø§Ù„ÙŠÙˆÙ… Ø§Ù„ØµØ­ÙŠØ­ (Ø£Ù…Ø³)
+  // ▸ أذكار المساء: وقتها من المغرب حتى الفجر.
+  //   إذا كان الوقت بعد منتصف الليل وقبل الفجر → اليوم المنطقي = أمس
+  //   (لأن المستخدم لا يزال في جلسة مساء اليوم السابق).
+  //   هذا يضمن:
+  //     • السلسلة لا تنقطع لو قرأ أذكار المساء بعد منتصف الليل
+  //     • التقويم يُضع النقطة على اليوم الصحيح (أمس)
   //
-  // â–¸ Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­ ÙˆØ§Ù„Ø­ÙØ¸: ØªØ¨Ø¯Ø£ Ø¹Ù†Ø¯ Ø§Ù„ÙØ¬Ø± ÙˆØªÙ†ØªÙ‡ÙŠ Ø¹Ù†Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„.
-  //   Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„Ù…Ù†Ø·Ù‚ÙŠ = Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„Ù…ÙŠÙ„Ø§Ø¯ÙŠ Ø§Ù„Ø­Ù‚ÙŠÙ‚ÙŠ Ø¯Ø§Ø¦Ù…Ø§Ù‹.
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // ▸ أذكار الصباح والحفظ: تبدأ عند الفجر وتنتهي عند منتصف الليل.
+  //   التاريخ المنطقي = التاريخ الميلادي الحقيقي دائماً.
+  // ═══════════════════════════════════════════════════════════════════════════
 
   String _logicalDate({bool forEvening = false}) {
     final now = DateTime.now();
@@ -160,14 +160,14 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       '${d.month.toString().padLeft(2, '0')}-'
       '${d.day.toString().padLeft(2, '0')}';
 
-  // â”€â”€ Load / Save â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Load / Save ───────────────────────────────────────────────────────────
   Future<void> _loadState() async {
     final prefs = await SharedPreferences.getInstance();
-    final today = _logicalDate(); // Ø§Ù„ØµØ¨Ø§Ø­ = ØªØ§Ø±ÙŠØ® Ø­Ù‚ÙŠÙ‚ÙŠ
+    final today = _logicalDate(); // الصباح = تاريخ حقيقي
     final savedDate = prefs.getString(_dateKey);
 
     if (savedDate == today) {
-      // Ù†ÙØ³ Ø§Ù„ÙŠÙˆÙ… â†’ Ø§Ù‚Ø±Ø£ Ø§Ù„Ø­Ø§Ù„Ø© Ø§Ù„Ù…Ø­ÙÙˆØ¸Ø© ÙƒÙ…Ø§ Ù‡ÙŠ
+      // نفس اليوم → اقرأ الحالة المحفوظة كما هي
       final map = _decodeMap(prefs.getString(_stateKey));
       final hifzMap = _decodeMap(prefs.getString(_hifzKey));
       _counts[AzkarMode.morning] =
@@ -179,8 +179,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         _hifzCounts[i] = hifzList[i];
       }
     } else {
-      // ÙŠÙˆÙ… Ø¬Ø¯ÙŠØ¯ (ØªØ¬Ø§ÙˆØ²Ù†Ø§ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„) â†’ ØµÙÙ‘Ø± Ø§Ù„ØµØ¨Ø§Ø­ ÙˆØ§Ù„Ø­ÙØ¸ ÙÙ‚Ø·
-      // Ø§Ù„Ù…Ø³Ø§Ø¡ ÙŠÙØµÙÙŽÙ‘Ø± Ø¹Ù†Ø¯ Ø§Ù„ÙØ¬Ø± Ø¨ÙˆØ§Ø³Ø·Ø© WorkManager
+      // يوم جديد (تجاوزنا منتصف الليل) → صفّر الصباح والحفظ فقط
+      // المساء يُصفَّر عند الفجر بواسطة WorkManager
       final map = _decodeMap(prefs.getString(_stateKey));
       map['morning'] = List<int>.filled(azkarData.length, 0);
       await prefs.setString(_stateKey, jsonEncode(map));
@@ -190,7 +190,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       );
       await prefs.setString(_dateKey, today);
 
-      // Ø§Ø¨Ù‚Ù Ø¹Ù„Ù‰ Ù‚ÙŠÙ… Ø§Ù„Ù…Ø³Ø§Ø¡ Ù„Ùˆ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… Ù„Ø§ ÙŠØ²Ø§Ù„ ÙÙŠ Ø¬Ù„Ø³Ø© Ø§Ù„Ù…Ø³Ø§Ø¡
+      // ابقِ على قيم المساء لو المستخدم لا يزال في جلسة المساء
       _counts[AzkarMode.evening] =
           _decodeIntList(map['evening'], azkarData.length);
     }
@@ -223,7 +223,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     _savedMaghribHour = prefs.getInt('maghrib_hour');
     _savedMaghribMinute = prefs.getInt('maghrib_minute');
 
-    // manual overrides â€” null if never set
+    // manual overrides — null if never set
     final mfh = prefs.getInt('manual_fajr_hour');
     final mfm = prefs.getInt('manual_fajr_minute');
     final mmh = prefs.getInt('manual_maghrib_hour');
@@ -307,7 +307,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     await prefs.setString(_historyKey, jsonEncode(_history));
   }
 
-  // â”€â”€ ÙˆØ¶Ø¹ Ø§Ù„ØµØ¨Ø§Ø­/Ø§Ù„Ù…Ø³Ø§Ø¡ Ø¨Ù†Ø§Ø¡Ù‹ Ø¹Ù„Ù‰ ÙˆÙ‚Øª Ø§Ù„ÙØ¬Ø± Ø§Ù„Ø­Ù‚ÙŠÙ‚ÙŠ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── وضع الصباح/المساء بناءً على وقت الفجر الحقيقي ────────────────────────
   void _applyModeByClock() {
   final now = DateTime.now();
 
@@ -338,7 +338,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   _setSystemBars();
 }
 
-  // â”€â”€ Ø§Ù„ÙˆÙ‚Øª Ø§Ù„ÙØ¹Ù„ÙŠ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù…: override Ø¥Ù† ÙˆÙØ¬Ø¯ØŒ ÙˆØ¥Ù„Ø§ GPS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── الوقت الفعلي المستخدم: override إن وُجد، وإلا GPS ───────────────────
   int get _effectiveFajrHour      => _manualFajrHour      ?? _savedFajrHour    ?? 5;
   int get _effectiveFajrMinute    => _manualFajrMinute    ?? _savedFajrMinute  ?? 0;
   int get _effectiveMaghribHour   => _manualMaghribHour   ?? _savedMaghribHour   ?? 18;
@@ -350,7 +350,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   String _fmtTime(int h, int m) =>
       '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
 
-  // â”€â”€ ÙØªØ­ TimePicker ÙˆØªØ·Ø¨ÙŠÙ‚ override â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── فتح TimePicker وتطبيق override ────────────────────────────────────────
   Future<void> _pickPrayerTime({
     required bool isFajr,
     required StateSetter setModal,
@@ -363,7 +363,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     final picked = await showTimePicker(
       context: context,
       initialTime: initial,
-      helpText: isFajr ? 'Ø¶Ø¨Ø· ÙˆÙ‚Øª Ø§Ù„ÙØ¬Ø±' : 'Ø¶Ø¨Ø· ÙˆÙ‚Øª Ø§Ù„Ù…ØºØ±Ø¨',
+      helpText: isFajr ? 'ضبط وقت الفجر' : 'ضبط وقت المغرب',
       builder: (ctx, child) {
         final colors = _modeColors;
         final isMorningTheme =
@@ -472,7 +472,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     setModal(() {});
   }
 
-  // â”€â”€ Ø¥Ø¹Ø§Ø¯Ø© Ø¶Ø¨Ø· Ø¥Ù„Ù‰ GPS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── إعادة ضبط إلى GPS ────────────────────────────────────────────────────
   Future<void> _resetPrayerTimeToGps({
     required bool isFajr,
     required StateSetter setModal,
@@ -500,7 +500,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     setModal(() {});
   }
 
-  // â”€â”€ Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ø¬Ø¯ÙˆÙ„Ø© Ø¨Ø§Ù„Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ÙØ¹Ù„ÙŠØ© (GPS Ø£Ùˆ override) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── إعادة الجدولة بالأوقات الفعلية (GPS أو override) ─────────────────────
   Future<void> _rescheduleWithOverrides() async {
     try {
       await PrayerNotificationService.cancelAll();
@@ -519,16 +519,16 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         if (fajr.isAfter(now)) {
           await PrayerNotificationService.scheduleManual(
             id: notifId++,
-            title: 'ðŸŒ… Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­',
-            body: 'Ø­Ø§Ù† ÙˆÙ‚Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­ â€” Ø¨Ø§Ø±Ùƒ Ø§Ù„Ù„Ù‡ ÙÙŠ ÙŠÙˆÙ…Ùƒ',
+            title: '🌅 أذكار الصباح',
+            body: 'حان وقت أذكار الصباح — بارك الله في يومك',
             scheduledTime: fajr,
           );
         }
         if (maghrib.isAfter(now)) {
           await PrayerNotificationService.scheduleManual(
             id: notifId++,
-            title: 'ðŸŒ™ Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡',
-            body: 'Ø­Ø§Ù† ÙˆÙ‚Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡ â€” Ø­ÙØ¸Ùƒ Ø§Ù„Ù„Ù‡',
+            title: '🌙 أذكار المساء',
+            body: 'حان وقت أذكار المساء — حفظك الله',
             scheduledTime: maghrib,
           );
         }
@@ -536,30 +536,30 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     } catch (_) {}
   }
 
-  // â”€â”€ ØªÙØ¹ÙŠÙ„/ØªØ¹Ø·ÙŠÙ„ Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── تفعيل/تعطيل الإشعارات ────────────────────────────────────────────────
   Future<void> _toggleNotifications() async {
     if (!_notificationsEnabled) {
-      // â”€â”€ ØªÙØ¹ÙŠÙ„: Ø¬Ù„Ø¨ Ø§Ù„Ù…ÙˆÙ‚Ø¹ ÙˆØ¬Ø¯ÙˆÙ„Ø© Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      _showSnack('Ø¬Ø§Ø±Ù Ø¬Ù„Ø¨ Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø©...');
+      // ── تفعيل: جلب الموقع وجدولة الإشعارات ──────────────────────────────
+      _showSnack('جارٍ جلب أوقات الصلاة...');
       try {
         final result = await PrayerNotificationService.scheduleFromLocation();
         await scheduleAllResets();
 
-        // â”€â”€ ØªØ­Ø¯ÙŠØ« Ø§Ù„Ø£ÙˆÙ‚Ø§Øª ÙÙŠ Ø§Ù„Ù€ state ÙÙˆØ±Ø§Ù‹ Ø¨Ø¹Ø¯ Ø§Ù„Ø¬Ù„Ø¨ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // scheduleFromLocation ØªØ­ÙØ¸ Ø§Ù„Ø£ÙˆÙ‚Ø§Øª ÙÙŠ SharedPreferences
-        // Ù„ÙƒÙ† Ø§Ù„Ù…ØªØºÙŠØ±Ø§Øª ÙÙŠ Ø§Ù„Ø°Ø§ÙƒØ±Ø© ØªØ¸Ù„ Ù‚Ø¯ÙŠÙ…Ø© Ø­ØªÙ‰ Ù†Ø­Ø¯Ù‘Ø«Ù‡Ø§ Ù‡Ù†Ø§
+        // ── تحديث الأوقات في الـ state فوراً بعد الجلب ───────────────────
+        // scheduleFromLocation تحفظ الأوقات في SharedPreferences
+        // لكن المتغيرات في الذاكرة تظل قديمة حتى نحدّثها هنا
         final prefs = await SharedPreferences.getInstance();
         if (mounted) {
           setState(() {
             _notificationsEnabled = true;
-            // Ø§Ù‚Ø±Ø£ Ø§Ù„Ø£ÙˆÙ‚Ø§Øª Ø§Ù„Ø¬Ø¯ÙŠØ¯Ø© Ù…Ù† Ø§Ù„Ù€ prefs Ù…Ø¨Ø§Ø´Ø±Ø©
+            // اقرأ الأوقات الجديدة من الـ prefs مباشرة
             _savedFajrHour    = prefs.getInt('fajr_hour');
             _savedFajrMinute  = prefs.getInt('fajr_minute');
             _savedMaghribHour   = prefs.getInt('maghrib_hour');
             _savedMaghribMinute = prefs.getInt('maghrib_minute');
-            // Ø¥Ø°Ø§ Ù„Ù… ÙŠÙƒÙ† Ù‡Ù†Ø§Ùƒ override ÙŠØ¯ÙˆÙŠØŒ Ø£ÙˆÙ‚Ø§Øª Ø§Ù„Ù€ GPS Ù‡ÙŠ Ø§Ù„ÙØ¹Ù„ÙŠØ©
+            // إذا لم يكن هناك override يدوي، أوقات الـ GPS هي الفعلية
             if (_manualFajrHour == null) {
-              // Ù„Ø§ Ø´ÙŠØ¡ â€” _effectiveFajrHour Ø³ÙŠÙ‚Ø±Ø£ _savedFajrHour ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹
+              // لا شيء — _effectiveFajrHour سيقرأ _savedFajrHour تلقائياً
             }
           });
         }
@@ -567,18 +567,18 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         await _saveState();
         _showSnack(result);
       } catch (e) {
-        _showSnack('Ø­Ø¯Ø« Ø®Ø·Ø£: $e');
+        _showSnack('حدث خطأ: $e');
       }
     } else {
-      // â”€â”€ Ø¥ÙŠÙ‚Ø§Ù: Ø¥Ù„ØºØ§Ø¡ Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // ── إيقاف: إلغاء الإشعارات ────────────────────────────────────────────
       try {
         await PrayerNotificationService.cancelAll();
       } catch (_) {
-        // Ø­ØªÙ‰ Ù„Ùˆ ÙØ´Ù„ Ø§Ù„Ø¥Ù„ØºØ§Ø¡ØŒ Ù†ÙØ­Ø¯Ù‘Ø« Ø§Ù„Ù€ state
+        // حتى لو فشل الإلغاء، نُحدّث الـ state
       }
       if (mounted) setState(() => _notificationsEnabled = false);
       await _saveState();
-      _showSnack('ØªÙ… Ø¥ÙŠÙ‚Ø§Ù Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª');
+      _showSnack('تم إيقاف الإشعارات');
     }
   }
 
@@ -709,7 +709,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
     if (!completed || !mounted) return;
 
-    // âœ… Ø§Ù„Ù…Ø³Ø§Ø¡ ÙŠØ³ØªØ®Ø¯Ù… forEvening: true â†’ ÙŠØ­Ø³Ø¨ Ø¹Ù„Ù‰ Ø§Ù„ØªØ§Ø±ÙŠØ® Ø§Ù„ØµØ­ÙŠØ­ Ø­ØªÙ‰ Ù„Ùˆ Ø¨Ø¹Ø¯ Ù…Ù†ØªØµÙ Ø§Ù„Ù„ÙŠÙ„
+    // ✅ المساء يستخدم forEvening: true → يحسب على التاريخ الصحيح حتى لو بعد منتصف الليل
     final today = _logicalDate(forEvening: key == 'evening');
     final alreadyMarked = _history[today]?[key] == true;
     if (alreadyMarked) return;
@@ -729,12 +729,12 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         ? Icons.shield_rounded
         : Icons.volunteer_activism_rounded;
     final subtitle = _rootTab == RootTab.hifz
-        ? 'Ø§ÙƒØªÙ…Ù„Øª Ø¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸'
+        ? 'اكتملت آيات الحفظ'
         : _mode == AzkarMode.morning
-            ? 'Ø§ÙƒØªÙ…Ù„Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­'
-            : 'Ø§ÙƒØªÙ…Ù„Øª Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡';
+            ? 'اكتملت أذكار الصباح'
+            : 'اكتملت أذكار المساء';
     final secondary =
-        _rootTab == RootTab.hifz ? 'Ø­ÙØ¸Ùƒ Ø§Ù„Ù„Ù‡ ÙˆØ±Ø¹Ø§Ùƒ ðŸ¤²' : 'ØªÙ‚Ø¨Ù‘Ù„ Ø§Ù„Ù„Ù‡ Ù…Ù†Ùƒ ðŸ¤²';
+        _rootTab == RootTab.hifz ? 'حفظك الله ورعاك 🤲' : 'تقبّل الله منك 🤲';
 
     await showGeneralDialog<void>(
       context: context,
@@ -772,7 +772,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                     ),
                     const SizedBox(height: 24),
                     Text(
-                      'Ø£Ø­Ø³Ù†Øª!',
+                      'أحسنت!',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.scheherazadeNew(
                         fontSize: 34,
@@ -812,7 +812,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                             borderRadius: BorderRadius.circular(999)),
                       ),
                       child: Text(
-                        'Ø§Ù„Ø¹ÙˆØ¯Ø©',
+                        'العودة',
                         style: GoogleFonts.scheherazadeNew(
                             fontSize: 22, fontWeight: FontWeight.w700),
                       ),
@@ -998,9 +998,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     );
   }
 
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // ═══════════════════════════════════════════════════════════════════════════
   // BUILD
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final colors = _modeColors;
@@ -1056,7 +1056,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             foregroundColor: colors.accentText,
             elevation: 10,
             icon: const Icon(Icons.restart_alt_rounded),
-            label: const Text('Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ø¨Ø¯Ø¡'),
+            label: const Text('إعادة البدء'),
           ),
           floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
         ),
@@ -1066,16 +1066,16 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
   Widget _buildHeader(_ModeColors colors, {Key? key}) {
     final title = _rootTab == RootTab.hifz
-        ? 'Ø¢ÙŠÙŽØ§ØªÙ Ø§Ù„Ø­ÙÙÙ’Ø¸'
+        ? 'آيَاتُ الحِفْظ'
         : _mode == AzkarMode.morning
-            ? 'Ø£ÙŽØ°Ù’ÙƒÙŽØ§Ø±Ù Ø§Ù„ØµÙŽÙ‘Ø¨ÙŽØ§Ø­Ù'
-            : 'Ø£ÙŽØ°Ù’ÙƒÙŽØ§Ø±Ù Ø§Ù„Ù…ÙŽØ³ÙŽØ§Ø¡Ù';
+            ? 'أَذْكَارُ الصَّبَاحِ'
+            : 'أَذْكَارُ المَسَاءِ';
 
     final subtitle = _rootTab == RootTab.hifz
-        ? 'ÙˆØ±Ø¯ Ø§Ù„Ø­ÙØ¸ ÙˆØ§Ù„ØªØ­ØµÙŠÙ†'
+        ? 'ورد الحفظ والتحصين'
         : _mode == AzkarMode.morning
-            ? 'Ù…Ù† Ø§Ù„ÙØ¬Ø± Ø¥Ù„Ù‰ Ø§Ù„Ù…ØºØ±Ø¨'
-            : 'Ù…Ù† Ø§Ù„Ù…ØºØ±Ø¨ Ø¥Ù„Ù‰ Ø§Ù„ÙØ¬Ø±';
+            ? 'من الفجر إلى المغرب'
+            : 'من المغرب إلى الفجر';
 
     return Container(
       key: key,
@@ -1096,7 +1096,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 child: Column(
                   children: [
                     Text(
-                      'Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ù',
+                      'بِسْمِ اللهِ الرَّحْمَنِ الرَّحِيمِ',
                       style: GoogleFonts.amiri(
                         color: colors.accentText.withValues(alpha: 0.72),
                         fontSize: 19,
@@ -1137,9 +1137,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildModeButton('Ø§Ù„ØµØ¨Ø§Ø­', AzkarMode.morning, colors,
+                  _buildModeButton('الصباح', AzkarMode.morning, colors,
                       icon: Icons.wb_sunny_rounded),
-                  _buildModeButton('Ø§Ù„Ù…Ø³Ø§Ø¡', AzkarMode.evening, colors,
+                  _buildModeButton('المساء', AzkarMode.evening, colors,
                       icon: Icons.nights_stay_rounded),
                 ],
               ),
@@ -1205,7 +1205,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           Row(
             textDirection: TextDirection.rtl,
             children: [
-              Text('Ø§Ù„ØªÙ‚Ø¯Ù…',
+              Text('التقدم',
                   style: TextStyle(
                       color: colors.accentText.withValues(alpha: 0.8), fontSize: 18)),
               const Spacer(),
@@ -1257,7 +1257,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           note: note ?? '',
           fadl: item.fadl ?? '',
           topText: index == 2
-          ? 'Ø£ÙŽØ¹ÙÙˆØ°Ù Ø¨ÙØ§Ù„Ù„Ù‡Ù Ù…ÙÙ†ÙŽ Ø§Ù„Ø´ÙŽÙ‘ÙŠÙ’Ø·ÙŽØ§Ù†Ù Ø§Ù„Ø±ÙŽÙ‘Ø¬ÙÙŠÙ…Ù'
+          ? 'أَعُوذُ بِاللهِ مِنَ الشَّيْطَانِ الرَّجِيمِ'
               : '',
           currentCount: currentCount,
           targetCount: target,
@@ -1283,16 +1283,16 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
         String topText = '';
         String displayText = item.text ?? item.s ?? '';
-        const basmalaTag = 'ï´¿Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ùï´¾';
+        const basmalaTag = '﴿بِسْمِ اللهِ الرَّحْمَنِ الرَّحِيمِ﴾';
 
-        if (source.contains('Ø§Ù„ÙƒØ±Ø³ÙŠ')) {
+        if (source.contains('الكرسي')) {
           topText =
-              'Ø£ÙŽØ¹ÙÙˆØ°Ù Ø¨ÙØ§Ù„Ù„Ù‡Ù Ù…ÙÙ†ÙŽ Ø§Ù„Ø´ÙŽÙ‘ÙŠÙ’Ø·ÙŽØ§Ù†Ù Ø§Ù„Ø±ÙŽÙ‘Ø¬ÙÙŠÙ…Ù\nï´¿Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ùï´¾';
-        } else if (source.contains('Ø§Ù„Ø¨Ù‚Ø±Ø©') || source.contains('Ø§Ù„Ø¨Ø±ÙˆØ¬')) {
-          topText = 'ï´¿Ø¨ÙØ³Ù’Ù…Ù Ø§Ù„Ù„Ù‡Ù Ø§Ù„Ø±ÙŽÙ‘Ø­Ù’Ù…ÙŽÙ†Ù Ø§Ù„Ø±ÙŽÙ‘Ø­ÙÙŠÙ…Ùï´¾';
-        } else if (source.contains('Ø§Ù„Ø¥Ø®Ù„Ø§Øµ') ||
-            source.contains('Ø§Ù„ÙÙ„Ù‚') ||
-            source.contains('Ø§Ù„Ù†Ø§Ø³')) {
+              'أَعُوذُ بِاللهِ مِنَ الشَّيْطَانِ الرَّجِيمِ\n﴿بِسْمِ اللهِ الرَّحْمَنِ الرَّحِيمِ﴾';
+        } else if (source.contains('البقرة') || source.contains('البروج')) {
+          topText = '﴿بِسْمِ اللهِ الرَّحْمَنِ الرَّحِيمِ﴾';
+        } else if (source.contains('الإخلاص') ||
+            source.contains('الفلق') ||
+            source.contains('الناس')) {
           if (displayText.startsWith(basmalaTag)) {
             topText = basmalaTag;
             displayText = displayText.substring(basmalaTag.length).trimLeft();
@@ -1369,7 +1369,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                   if (done)
                     Row(
                       children: [
-                        Text('Ø§ÙƒØªÙ…Ù„',
+                        Text('اكتمل',
                             style: GoogleFonts.scheherazadeNew(
                               color: const Color(0xFF5EB36C),
                               fontSize: 18,
@@ -1432,7 +1432,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                   child: OutlinedButton.icon(
                     onPressed: () => _showFadlPopup(fadl),
                     icon: const Icon(Icons.auto_awesome),
-                    label: const Text('ÙØ¶Ù„ Ø§Ù„Ø°ÙƒØ±'),
+                    label: const Text('فضل الذكر'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: colors.accentText,
                       side: BorderSide(color: colors.border),
@@ -1537,7 +1537,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           child: done
               ? const Icon(Icons.check_rounded,
                   color: Color(0xFF4CAF50), size: 30)
-              : const Text('ðŸ™Œ', style: TextStyle(fontSize: 26)),
+              : const Text('🙌', style: TextStyle(fontSize: 26)),
         ),
       ),
     );
@@ -1567,9 +1567,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             _buildTabButton(
               title: _rootTab == RootTab.azkar
                   ? (_mode == AzkarMode.morning
-                      ? 'Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­'
-                      : 'Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡')
-                  : 'Ø§Ù„Ø£Ø°ÙƒØ§Ø±',
+                      ? 'أذكار الصباح'
+                      : 'أذكار المساء')
+                  : 'الأذكار',
               icon: Icons.volunteer_activism_rounded,
               active: _rootTab == RootTab.azkar,
               colors: colors,
@@ -1577,7 +1577,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               onTap: () => setState(() => _rootTab = RootTab.azkar),
             ),
             _buildTabButton(
-              title: 'Ø¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸',
+              title: 'آيات الحفظ',
               icon: Icons.shield_moon_rounded,
               active: _rootTab == RootTab.hifz,
               colors: colors,
@@ -1686,13 +1686,13 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                     const SizedBox(height: 14),
                     Row(
                       children: [
-                        _sheetTabBtn('Ø§Ù„Ø³Ù„Ø§Ø³Ù„', SheetTab.streaks, setModal,
+                        _sheetTabBtn('السلاسل', SheetTab.streaks, setModal,
                             icon: Icons.local_fire_department_rounded),
-                        _sheetTabBtn('Ø§Ù„ØªÙ‚ÙˆÙŠÙ…', SheetTab.calendar, setModal,
+                        _sheetTabBtn('التقويم', SheetTab.calendar, setModal,
                             icon: Icons.calendar_month_rounded),
-                        _sheetTabBtn('Ø§Ù„Ø³Ø¨Ø­Ø©', SheetTab.tasbih, setModal,
+                        _sheetTabBtn('السبحة', SheetTab.tasbih, setModal,
                             icon: Icons.brightness_medium_rounded),
-                        _sheetTabBtn('Ø§Ù„Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª', SheetTab.settings, setModal,
+                        _sheetTabBtn('الإعدادات', SheetTab.settings, setModal,
                             icon: Icons.settings_rounded),
                       ],
                     ),
@@ -1803,7 +1803,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
                         color: colors.accentText)),
-                Text('Ø§Ù„Ø­Ø§Ù„ÙŠØ©',
+                Text('الحالية',
                     style:
                         TextStyle(color: colors.accentText.withValues(alpha: 0.65))),
               ],
@@ -1816,7 +1816,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
                         color: colors.accentText)),
-                Text('Ø§Ù„Ø£Ø·ÙˆÙ„',
+                Text('الأطول',
                     style:
                         TextStyle(color: colors.accentText.withValues(alpha: 0.65))),
               ],
@@ -1828,9 +1828,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
     return Column(
       children: [
-        box('Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­', 'morning', Icons.wb_sunny_rounded),
-        box('Ø£Ø°ÙƒØ§Ø± Ø§Ù„Ù…Ø³Ø§Ø¡', 'evening', Icons.nights_stay_rounded),
-        box('Ø¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸', 'hifz', Icons.shield_rounded),
+        box('أذكار الصباح', 'morning', Icons.wb_sunny_rounded),
+        box('أذكار المساء', 'evening', Icons.nights_stay_rounded),
+        box('آيات الحفظ', 'hifz', Icons.shield_rounded),
       ],
     );
   }
@@ -1845,10 +1845,10 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     final trailingEmpty = (7 - (totalCells % 7)) % 7;
 
     const monthNames = [
-      'ÙŠÙ†Ø§ÙŠØ±','ÙØ¨Ø±Ø§ÙŠØ±','Ù…Ø§Ø±Ø³','Ø£Ø¨Ø±ÙŠÙ„','Ù…Ø§ÙŠÙˆ','ÙŠÙˆÙ†ÙŠÙˆ',
-      'ÙŠÙˆÙ„ÙŠÙˆ','Ø£ØºØ³Ø·Ø³','Ø³Ø¨ØªÙ…Ø¨Ø±','Ø£ÙƒØªÙˆØ¨Ø±','Ù†ÙˆÙÙ…Ø¨Ø±','Ø¯ÙŠØ³Ù…Ø¨Ø±',
+      'يناير','فبراير','مارس','أبريل','مايو','يونيو',
+      'يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر',
     ];
-    const weekDays = ['Ø³Ø¨Øª','Ø¬Ù…Ø¹','Ø®Ù…ÙŠ','Ø£Ø±Ø¨','Ø«Ù„Ø§','Ø§Ø«Ù†','Ø£Ø­Ø¯'];
+    const weekDays = ['سبت','جمع','خمي','أرب','ثلا','اثن','أحد'];
 
     Widget legendDot(Color color, String label) => Row(
           mainAxisSize: MainAxisSize.min,
@@ -1903,9 +1903,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           spacing: 14,
           runSpacing: 8,
           children: [
-            legendDot(const Color(0xFFF59E0B), 'Ø§Ù„ØµØ¨Ø§Ø­'),
-            legendDot(const Color(0xFF8B5CF6), 'Ø§Ù„Ù…Ø³Ø§Ø¡'),
-            legendDot(const Color(0xFF3B82F6), 'Ø§Ù„Ø­ÙØ¸'),
+            legendDot(const Color(0xFFF59E0B), 'الصباح'),
+            legendDot(const Color(0xFF8B5CF6), 'المساء'),
+            legendDot(const Color(0xFF3B82F6), 'الحفظ'),
           ],
         ),
         const SizedBox(height: 12),
@@ -2044,7 +2044,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                         fontWeight: FontWeight.bold,
                         color: colors.accentText)),
                 const SizedBox(height: 6),
-                Text('Ø§Ø¶ØºØ· Ù„Ù„ØªØ³Ø¨ÙŠØ­',
+                Text('اضغط للتسبيح',
                     style: TextStyle(
                         color: colors.accentText.withValues(alpha: 0.7))),
               ],
@@ -2055,9 +2055,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _presetBtn('Ù£Ù£', 33, colors, setModal),
+            _presetBtn('٣٣', 33, colors, setModal),
             const SizedBox(width: 8),
-            _presetBtn('Ø­Ø±', 0, colors, setModal),
+            _presetBtn('حر', 0, colors, setModal),
           ],
         ),
         const SizedBox(height: 18),
@@ -2075,7 +2075,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         ),
         const SizedBox(height: 12),
         Text(
-          _tasbihTarget == 0 ? 'ÙˆØ¶Ø¹ Ø­Ø±' : '$_tasbihTarget / $_tasbihCount',
+          _tasbihTarget == 0 ? 'وضع حر' : '$_tasbihTarget / $_tasbihCount',
           style: TextStyle(color: colors.accentText, fontSize: 18),
         ),
         const SizedBox(height: 16),
@@ -2085,7 +2085,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             await _saveState();
           },
           icon: const Icon(Icons.restart_alt_rounded),
-          label: const Text('Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ø¨Ø¯Ø¡'),
+          label: const Text('إعادة البدء'),
           style: OutlinedButton.styleFrom(
             foregroundColor: colors.accentText,
             side: BorderSide(color: colors.border),
@@ -2120,7 +2120,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   }
 
   Widget _buildSettingsPage(_ModeColors colors, StateSetter setModal) {
-    // â”€â”€ toggleRow ÙŠÙ‚Ø±Ø£ Ø§Ù„Ù‚ÙŠÙ…Ø© Ø¹Ø¨Ø± getter Ù„Ø§ snapshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── toggleRow يقرأ القيمة عبر getter لا snapshot ─────────────────────
     Widget toggleRow(
       String title,
       String subtitle,
@@ -2231,7 +2231,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       );
     }
 
-    // â”€â”€ ØµÙ ÙˆÙ‚Øª Ø§Ù„ØµÙ„Ø§Ø© Ø§Ù„ÙˆØ§Ø­Ø¯ (ÙØ¬Ø± Ø£Ùˆ Ù…ØºØ±Ø¨) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── صف وقت الصلاة الواحد (فجر أو مغرب) ─────────────────────────────
     Widget prayerTimeRow({
       required IconData titleIcon,
       required String label,
@@ -2257,7 +2257,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         child: Row(
           textDirection: TextDirection.rtl,
           children: [
-            // â”€â”€ Ø§Ù„ÙˆÙ‚Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── الوقت ──────────────────────────────────────────────────
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -2309,7 +2309,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                                 color: colors.accent.withValues(alpha: 0.4)),
                           ),
                           child: Text(
-                            'ÙŠØ¯ÙˆÙŠ',
+                            'يدوي',
                             style: GoogleFonts.amiri(
                               fontSize: 13,
                               color: colors.accent,
@@ -2322,10 +2322,10 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 ],
               ),
             ),
-            // â”€â”€ Ø£Ø²Ø±Ø§Ø± Ø§Ù„ØªØ¹Ø¯ÙŠÙ„ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            // Ø²Ø± ØªØ¹Ø¯ÙŠÙ„ ÙŠØ¯ÙˆÙŠ
+            // ── أزرار التعديل ─────────────────────────────────────────
+            // زر تعديل يدوي
             IconButton(
-              tooltip: 'Ø¶Ø¨Ø· ÙŠØ¯ÙˆÙŠ',
+              tooltip: 'ضبط يدوي',
               onPressed: () => _pickPrayerTime(
                 isFajr: isFajr,
                 setModal: setModal,
@@ -2336,10 +2336,10 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 color: colors.accentText.withValues(alpha: 0.75),
               ),
             ),
-            // Ø²Ø± Ø¥Ø¹Ø§Ø¯Ø© Ø¶Ø¨Ø· Ø¥Ù„Ù‰ GPS (ÙŠØ¸Ù‡Ø± ÙÙ‚Ø· Ø¥Ù† ÙˆÙØ¬Ø¯ override)
+            // زر إعادة ضبط إلى GPS (يظهر فقط إن وُجد override)
             if (hasOverride)
               IconButton(
-                tooltip: 'Ø¥Ø¹Ø§Ø¯Ø© Ø¶Ø¨Ø· GPS',
+                tooltip: 'إعادة ضبط GPS',
                 onPressed: () => _resetPrayerTimeToGps(
                   isFajr: isFajr,
                   setModal: setModal,
@@ -2355,7 +2355,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       );
     }
 
-    // â”€â”€ Ù„ÙˆØ­Ø© Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø© Ø§Ù„ÙƒØ§Ù…Ù„Ø© â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── لوحة أوقات الصلاة الكاملة ────────────────────────────────────────
     Widget prayerTimesPanel() {
       final hasAnyTime =
           _savedFajrHour != null || _savedMaghribHour != null;
@@ -2371,7 +2371,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // â”€â”€ Ø§Ù„Ø¹Ù†ÙˆØ§Ù† â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── العنوان ─────────────────────────────────────────────────
             Row(
               textDirection: TextDirection.rtl,
               children: [
@@ -2380,7 +2380,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                   textDirection: TextDirection.rtl,
                   children: [
                     Text(
-                      'Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø©',
+                      'أوقات الصلاة',
                       style: GoogleFonts.scheherazadeNew(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -2395,7 +2395,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 const Spacer(),
                 if (!hasAnyTime)
                   Text(
-                    'ÙØ¹Ù‘Ù„ Ø§Ù„Ø¥Ø´Ø¹Ø§Ø±Ø§Øª Ù„Ù„Ø¬Ù„Ø¨',
+                    'فعّل الإشعارات للجلب',
                     style: GoogleFonts.amiri(
                       fontSize: 14,
                       color: colors.accentText.withValues(alpha: 0.55),
@@ -2406,11 +2406,11 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             const SizedBox(height: 12),
 
             if (!hasAnyTime)
-              // â”€â”€ Ø­Ø§Ù„Ø© Ø¹Ø¯Ù… ÙˆØ¬ÙˆØ¯ Ø¨ÙŠØ§Ù†Ø§Øª â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ── حالة عدم وجود بيانات ──────────────────────────────
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                  'Ù„Ù… ÙŠØªÙ… Ø¬Ù„Ø¨ Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ØµÙ„Ø§Ø© Ø¨Ø¹Ø¯.\nÙØ¹Ù‘Ù„ "ØªØ°ÙƒÙŠØ± Ø¨Ø§Ù„Ø£Ø°ÙƒØ§Ø±" Ø£Ø¹Ù„Ø§Ù‡ Ù„Ù„Ø¬Ù„Ø¨ Ø§Ù„ØªÙ„Ù‚Ø§Ø¦ÙŠ.',
+                  'لم يتم جلب أوقات الصلاة بعد.\nفعّل "تذكير بالأذكار" أعلاه للجلب التلقائي.',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.amiri(
                     fontSize: 16,
@@ -2420,25 +2420,25 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 ),
               )
             else ...[
-              // â”€â”€ ØµÙ Ø§Ù„ÙØ¬Ø± â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ── صف الفجر ─────────────────────────────────────────
               prayerTimeRow(
                 titleIcon: Icons.wb_sunny_rounded,
-                label: 'Ø§Ù„ÙØ¬Ø±',
+                label: 'الفجر',
                 hour: _effectiveFajrHour,
                 minute: _effectiveFajrMinute,
                 hasOverride: _hasFajrOverride,
                 isFajr: true,
               ),
-              // â”€â”€ ØµÙ Ø§Ù„Ù…ØºØ±Ø¨ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ── صف المغرب ────────────────────────────────────────
               prayerTimeRow(
                 titleIcon: Icons.nights_stay_rounded,
-                label: 'Ø§Ù„Ù…ØºØ±Ø¨',
+                label: 'المغرب',
                 hour: _effectiveMaghribHour,
                 minute: _effectiveMaghribMinute,
                 hasOverride: _hasMaghribOverride,
                 isFajr: false,
               ),
-              // â”€â”€ ØªÙ„Ù…ÙŠØ­ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              // ── تلميح ────────────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Row(
@@ -2449,7 +2449,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                     const SizedBox(width: 5),
                     Expanded(
                       child: Text(
-                        'Ø§Ø¶ØºØ· âœï¸ Ù„Ø¶Ø¨Ø· Ø§Ù„ÙˆÙ‚Øª ÙŠØ¯ÙˆÙŠØ§Ù‹ØŒ ÙˆØ§Ø¶ØºØ· ðŸ“¡ Ù„Ù„Ø¹ÙˆØ¯Ø© Ø¥Ù„Ù‰ GPS',
+                        'اضغط ✏️ لضبط الوقت يدوياً، واضغط 📡 للعودة إلى GPS',
                         style: GoogleFonts.amiri(
                           fontSize: 13,
                           color: colors.accentText.withValues(alpha: 0.45),
@@ -2475,8 +2475,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           )
         else ...[
           toggleRow(
-            'ØªØ°ÙƒÙŠØ± Ø¨Ø§Ù„Ø£Ø°ÙƒØ§Ø±',
-            'Ø¥Ø´Ø¹Ø§Ø±Ø§Øª Ø¨Ø£ÙˆÙ‚Ø§Øª Ø§Ù„ÙØ¬Ø± ÙˆØ§Ù„Ù…ØºØ±Ø¨ Ø¨Ø­Ø³Ø¨ Ù…ÙˆÙ‚Ø¹Ùƒ',
+            'تذكير بالأذكار',
+            'إشعارات بأوقات الفجر والمغرب بحسب موقعك',
             () => _notificationsEnabled,
             _toggleNotifications,
             titleIcon: Icons.notifications_active_rounded,
@@ -2493,8 +2493,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           )
         else
           toggleRow(
-            'Ø§Ù„Ø§Ù‡ØªØ²Ø§Ø²',
-            'Ø§Ù‡ØªØ²Ø§Ø² Ø¹Ù†Ø¯ ÙƒÙ„ ØªØ³Ø¨ÙŠØ­Ø©',
+            'الاهتزاز',
+            'اهتزاز عند كل تسبيحة',
             () => _vibrationEnabled,
             () async {
               setState(() => _vibrationEnabled = !_vibrationEnabled);
@@ -2504,8 +2504,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             titleIcon: Icons.vibration_rounded,
           ),
         toggleRow(
-          'ØªÙ…Ø±ÙŠØ± ØªÙ„Ù‚Ø§Ø¦ÙŠ',
-          'Ø§Ù„Ø§Ù†ØªÙ‚Ø§Ù„ Ù„Ù„Ø°ÙƒØ± Ø§Ù„ØªØ§Ù„ÙŠ Ø¨Ø¹Ø¯ Ø§Ù„Ø¥ØªÙ…Ø§Ù…',
+          'تمرير تلقائي',
+          'الانتقال للذكر التالي بعد الإتمام',
           () => _autoScroll,
           () async {
             setState(() => _autoScroll = !_autoScroll);
@@ -2521,9 +2521,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             child: Wrap(
               spacing: 6,
               children: [
-                _fontChip('Øµ', 0.95, colors, setModal),
-                _fontChip('Ù…', 1.35, colors, setModal),
-                _fontChip('Ùƒ', 1.85, colors, setModal),
+                _fontChip('ص', 0.95, colors, setModal),
+                _fontChip('م', 1.35, colors, setModal),
+                _fontChip('ك', 1.85, colors, setModal),
               ],
             ),
           ),
@@ -2533,7 +2533,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               mainAxisSize: MainAxisSize.min,
               textDirection: TextDirection.rtl,
               children: [
-                Text('Ø­Ø¬Ù… Ø§Ù„Ø®Ø·',
+                Text('حجم الخط',
                     textAlign: TextAlign.right,
                     style: GoogleFonts.scheherazadeNew(
                         fontSize: 22, color: colors.text)),
@@ -2546,7 +2546,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               ],
             ),
           ),
-          subtitle: Text('ØµØºÙŠØ± / Ù…ØªÙˆØ³Ø· / ÙƒØ¨ÙŠØ±',
+          subtitle: Text('صغير / متوسط / كبير',
               textAlign: TextAlign.right,
               style: GoogleFonts.amiri(
                   color: colors.accentText.withValues(alpha: 0.7))),
@@ -2558,11 +2558,11 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             Icons.info_outline_rounded,
             color: colors.accentText.withValues(alpha: 0.85),
           ),
-          title: Text('Ø­ÙˆÙ„ Ø§Ù„ØªØ·Ø¨ÙŠÙ‚',
+          title: Text('حول التطبيق',
               textAlign: TextAlign.right,
               style: GoogleFonts.scheherazadeNew(
                   fontSize: 22, color: colors.text)),
-          subtitle: Text('Ù†Ø¨Ø°Ø© Ù…Ø®ØªØµØ±Ø© Ø¹Ù† Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ ÙˆÙ…ØµØ¯Ø± Ø§Ù„Ø£Ø°ÙƒØ§Ø±',
+          subtitle: Text('نبذة مختصرة عن التطبيق ومصدر الأذكار',
               textAlign: TextAlign.right,
               style: GoogleFonts.amiri(
                   color: colors.accentText.withValues(alpha: 0.7))),
@@ -2577,7 +2577,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     return ChoiceChip(
       label: Text(
         label,
-        style: TextStyle(fontSize: label == 'Ù…' ? 22 : 20),
+        style: TextStyle(fontSize: label == 'م' ? 22 : 20),
       ),
       selected: active,
       onSelected: (_) async {
@@ -2598,7 +2598,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     final normalizedText = text.trim();
     final fadlText = normalizedText.isEmpty
         ? normalizedText
-        : RegExp(r'[\.!\?ØŸÛ”]$').hasMatch(normalizedText)
+        : RegExp(r'[\.!\?؟۔]$').hasMatch(normalizedText)
             ? normalizedText
             : '$normalizedText.';
 
@@ -2625,7 +2625,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 ),
               ),
               Text(
-                'ÙØ¶Ù„ Ø§Ù„Ø°ÙƒØ±',
+                'فضل الذكر',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.scheherazadeNew(
                   fontSize: 28,
@@ -2677,7 +2677,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                   ),
                 ),
                 Text(
-                  'Ø­ÙˆÙ„ Ø§Ù„ØªØ·Ø¨ÙŠÙ‚',
+                  'حول التطبيق',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.scheherazadeNew(
                     fontSize: 28,
@@ -2687,9 +2687,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'ØªØ·Ø¨ÙŠÙ‚ Ø£Ø°ÙƒØ§Ø± ÙŠØ³Ø§Ø¹Ø¯Ùƒ Ø¹Ù„Ù‰ Ø§Ù„Ù…Ø­Ø§ÙØ¸Ø© Ø¹Ù„Ù‰ Ø£Ø°ÙƒØ§Ø± Ø§Ù„ØµØ¨Ø§Ø­ ÙˆØ§Ù„Ù…Ø³Ø§Ø¡ ÙˆØ¢ÙŠØ§Øª Ø§Ù„Ø­ÙØ¸.\n\n'
-                  'Ø¬ÙÙ…Ø¹Øª Ù‡Ø°Ù‡ Ø§Ù„Ø£Ø°ÙƒØ§Ø± Ù…Ù† ÙƒØªØ§Ø¨ Ø§Ù„Ø¥Ù…Ø§Ù… Ø§Ù„Ù…ÙØ³Ù‘Ø± Ø§Ù„Ù…Ø­Ø¯Ù‘Ø« Ø§Ù„Ø´ÙŠØ® Ø¹Ø¨Ø¯ Ø§Ù„Ù„Ù‡ Ø³Ø±Ø§Ø¬ Ø§Ù„Ø¯ÙŠÙ† Ø§Ù„Ø­Ø³ÙŠÙ†ÙŠ Ø±Ø¶ÙŠ Ø§Ù„Ù„Ù‡ Ø¹Ù†Ù‡.\n\n'
-                  'Ù†Ø³Ø£Ù„ Ø§Ù„Ù„Ù‡ Ø£Ù† ÙŠÙ†ÙØ¹Ù†Ø§ Ø¨Ù‡ØŒ ÙˆÙŠØ¬Ø¹Ù„Ù‡ Ø®Ø§Ù„ØµÙ‹Ø§ Ù„ÙˆØ¬Ù‡Ù‡ Ø§Ù„ÙƒØ±ÙŠÙ…ØŒ ÙˆÙÙŠ Ù…ÙŠØ²Ø§Ù† Ø­Ø³Ù†Ø§ØªÙ†Ø§.',
+                  'تطبيق أذكار يساعدك على المحافظة على أذكار الصباح والمساء وآيات الحفظ.\n\n'
+                  'جُمعت هذه الأذكار من كتاب الإمام المفسّر المحدّث الشيخ عبد الله سراج الدين الحسيني رضي الله عنه.\n\n'
+                  'نسأل الله أن ينفعنا به، ويجعله خالصًا لوجهه الكريم، وفي ميزان حسناتنا.',
                   textAlign: TextAlign.right,
                   textDirection: TextDirection.rtl,
                   style: GoogleFonts.amiri(
@@ -2710,7 +2710,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
-// â”€â”€â”€ Theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Theme ────────────────────────────────────────────────────────────────────
 class _ModeColors {
   final Color background;
   final Color card;
@@ -2737,7 +2737,7 @@ class _ModeColors {
   });
 }
 
-// â”€â”€â”€ Stars â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Stars ────────────────────────────────────────────────────────────────────
 class _EveningStarsBackground extends StatelessWidget {
   const _EveningStarsBackground();
 
