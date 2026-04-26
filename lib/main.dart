@@ -1537,7 +1537,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           child: done
               ? const Icon(Icons.check_rounded,
                   color: Color(0xFF4CAF50), size: 30)
-              : const Text('🙏', style: TextStyle(fontSize: 26)),
+              : Icon(Icons.volunteer_activism_rounded, color: colors.accent, size: 30),
         ),
       ),
     );
