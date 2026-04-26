@@ -98,21 +98,24 @@
   </div>
 
   <script>
-    window.addEventListener('flutter-first-frame', function () {
+    const loaderShownAt = Date.now();
+
+    function hideLoader() {
       const loader = document.getElementById('app-loader');
       if (loader) {
         loader.classList.add('is-hidden');
       }
       document.body.style.overflow = 'auto';
+    }
+
+    window.addEventListener('flutter-first-frame', function () {
+      const minimumLoaderTime = 4500;
+      const elapsed = Date.now() - loaderShownAt;
+      const remaining = Math.max(0, minimumLoaderTime - elapsed);
+      window.setTimeout(hideLoader, remaining);
     });
 
-    window.setTimeout(function () {
-      const loader = document.getElementById('app-loader');
-      if (loader) {
-        loader.classList.add('is-hidden');
-      }
-      document.body.style.overflow = 'auto';
-    }, 15000);
+    window.setTimeout(hideLoader, 15000);
   </script>
 
   <script src="flutter_bootstrap.js" async></script>
