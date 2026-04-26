@@ -1,2 +1,3 @@
-export 'reset_scheduler_stub.dart'
-    if (dart.library.io) 'reset_scheduler_mobile.dart';
+Future<void> initAndScheduleResets() async {}
+
+Future<void> scheduleAllResets() async {}
