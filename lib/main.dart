@@ -1325,8 +1325,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                   color: Color(0xFF4CAF50), size: 30)
               : SvgPicture.asset(
                   'assets/SVG/dhikr_button_clean.svg',
-                  width: 34,
-                  height: 34,
+                  width: 38,
+                  height: 38,
                   colorFilter: ColorFilter.mode(
                     colors.accent,
                     BlendMode.srcIn,
@@ -1538,8 +1538,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 const SizedBox(width: 3),
                 SvgPicture.asset(
                   svgAsset,
-                  width: 18,
-                  height: 18,
+                  width: 22,
+                  height: 22,
                   colorFilter: ColorFilter.mode(
                     _modeColors.accentText,
                     BlendMode.srcIn,
