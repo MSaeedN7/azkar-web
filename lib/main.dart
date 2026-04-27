@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -82,7 +83,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   bool _autoScroll = true;
   bool _notificationsEnabled = false;
 
-  int _tasbihCount = 0;
+  int _tasbihCount33 = 0;
+  int _tasbihCountFree = 0;
   int _tasbihTarget = 33;
 
   int? _savedFajrHour;
@@ -212,8 +214,17 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     }
 
     final tasbih = _decodeMap(prefs.getString(_tasbihKey));
-    _tasbihCount = tasbih['count'] ?? 0;
     _tasbihTarget = tasbih['target'] ?? 33;
+    _tasbihCount33 = tasbih['count33'] ?? 0;
+    _tasbihCountFree = tasbih['countFree'] ?? 0;
+    final legacyCount = tasbih['count'];
+    if (legacyCount is int) {
+      if (_tasbihTarget == 0 && _tasbihCountFree == 0) {
+        _tasbihCountFree = legacyCount;
+      } else if (_tasbihTarget != 0 && _tasbihCount33 == 0) {
+        _tasbihCount33 = legacyCount;
+      }
+    }
 
     _savedFajrHour = prefs.getInt('fajr_hour');
     _savedFajrMinute = prefs.getInt('fajr_minute');
@@ -298,7 +309,11 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     );
     await prefs.setString(
       _tasbihKey,
-      jsonEncode({'count': _tasbihCount, 'target': _tasbihTarget}),
+      jsonEncode({
+        'count33': _tasbihCount33,
+        'countFree': _tasbihCountFree,
+        'target': _tasbihTarget,
+      }),
     );
     await prefs.setString(_streaksKey, jsonEncode(_streaks));
     await prefs.setString(_historyKey, jsonEncode(_history));
@@ -355,6 +370,24 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   int _targetForHifz(int index) {
     final raw = hifzData[index].count ?? 1;
     return raw <= 0 ? 1 : raw;
+  }
+
+  int get _activeTasbihCount => _tasbihTarget == 0 ? _tasbihCountFree : _tasbihCount33;
+
+  void _incrementTasbihCount() {
+    if (_tasbihTarget == 0) {
+      _tasbihCountFree++;
+    } else {
+      _tasbihCount33++;
+    }
+  }
+
+  void _resetActiveTasbihCount() {
+    if (_tasbihTarget == 0) {
+      _tasbihCountFree = 0;
+    } else {
+      _tasbihCount33 = 0;
+    }
   }
 
   Future<void> _incrementAzkar(int index) async {
@@ -1290,17 +1323,13 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           child: done
               ? const Icon(Icons.check_rounded,
                   color: Color(0xFF4CAF50), size: 30)
-              : const Text(
-                  '🙌',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 30,
-                    height: 1,
-                    fontFamilyFallback: [
-                      'Segoe UI Emoji',
-                      'Noto Color Emoji',
-                      'Apple Color Emoji',
-                    ],
+              : SvgPicture.asset(
+                  'assets/SVG/dhikr_button_clean.svg',
+                  width: 34,
+                  height: 34,
+                  colorFilter: ColorFilter.mode(
+                    colors.accent,
+                    BlendMode.srcIn,
                   ),
                 ),
         ),
@@ -1456,7 +1485,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                         _sheetTabBtn('التقويم', SheetTab.calendar, setModal,
                             icon: Icons.calendar_month_rounded),
                         _sheetTabBtn('السبحة', SheetTab.tasbih, setModal,
-                            icon: Icons.brightness_medium_rounded),
+                            svgAsset: 'assets/SVG/tasbih-clean.svg'),
                         _sheetTabBtn('الإعدادات', SheetTab.settings, setModal,
                             icon: Icons.settings_rounded),
                       ],
@@ -1476,7 +1505,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   }
 
   Widget _sheetTabBtn(String text, SheetTab tab, StateSetter setModal,
-      {IconData? icon}) {
+      {IconData? icon, String? svgAsset}) {
     final active = _sheetTab == tab;
     return Expanded(
       child: GestureDetector(
@@ -1505,7 +1534,18 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                   fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                 ),
               ),
-              if (icon != null) ...[
+              if (svgAsset != null) ...[
+                const SizedBox(width: 3),
+                SvgPicture.asset(
+                  svgAsset,
+                  width: 18,
+                  height: 18,
+                  colorFilter: ColorFilter.mode(
+                    _modeColors.accentText,
+                    BlendMode.srcIn,
+                  ),
+                ),
+              ] else if (icon != null) ...[
                 const SizedBox(width: 3),
                 Icon(
                   icon,
@@ -1756,11 +1796,12 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       );
 
   Widget _buildTasbihPage(_ModeColors colors, StateSetter setModal) {
+    final tasbihCount = _activeTasbihCount;
     final cycleCount = _tasbihTarget <= 0
         ? 0
-        : _tasbihCount <= 0
+        : tasbihCount <= 0
             ? 0
-            : ((_tasbihCount - 1) % _tasbihTarget) + 1;
+            : ((tasbihCount - 1) % _tasbihTarget) + 1;
     final progress = _tasbihTarget == 0
         ? 1.0
         : (cycleCount / _tasbihTarget).clamp(0, 1).toDouble();
@@ -1770,13 +1811,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         GestureDetector(
           onTap: () async {
             final reachedGoal =
-                _tasbihTarget > 0 && _tasbihCount + 1 == _tasbihTarget;
+                _tasbihTarget > 0 && (tasbihCount + 1) % _tasbihTarget == 0;
             setModal(() {
-              if (_tasbihTarget > 0 && _tasbihCount >= _tasbihTarget) {
-                _tasbihCount = 1;
-              } else {
-                _tasbihCount++;
-              }
+              _incrementTasbihCount();
             });
             if (reachedGoal) {
               await _vibrate([0, 40, 35, 70, 35, 120]);
@@ -1803,7 +1840,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text('$_tasbihCount',
+                Text('$tasbihCount',
                     style: TextStyle(
                         fontSize: 54,
                         fontWeight: FontWeight.bold,
@@ -1840,13 +1877,13 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         ),
         const SizedBox(height: 12),
         Text(
-          _tasbihTarget == 0 ? 'وضع حر' : '$_tasbihTarget / $_tasbihCount',
+          _tasbihTarget == 0 ? 'وضع حر: $tasbihCount' : '$cycleCount / $_tasbihTarget',
           style: TextStyle(color: colors.accentText, fontSize: 18),
         ),
         const SizedBox(height: 16),
         OutlinedButton.icon(
           onPressed: () async {
-            setModal(() => _tasbihCount = 0);
+            setModal(_resetActiveTasbihCount);
             await _saveState();
           },
           icon: const Icon(Icons.restart_alt_rounded),
@@ -1871,7 +1908,6 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       onSelected: (_) async {
         setModal(() {
           _tasbihTarget = target;
-          _tasbihCount = 0;
         });
         await _saveState();
       },
