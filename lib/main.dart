@@ -9,6 +9,7 @@ import 'data.dart';
 import 'prayer_notification_service.dart';
 import 'reset_scheduler.dart';
 import 'vibration_helper.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await PrayerNotificationService.init();
@@ -18,7 +19,9 @@ void main() async {
 }
 
 enum AzkarMode { morning, evening }
+
 enum RootTab { azkar, hifz }
+
 enum SheetTab { streaks, calendar, tasbih, settings }
 
 class AzkarNativeApp extends StatelessWidget {
@@ -58,6 +61,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
   final ScrollController _scrollController = ScrollController();
   final ScrollController _hifzScrollController = ScrollController();
+  final PageController _rootPageController = PageController();
 
   late final Map<AzkarMode, List<int>> _counts = {
     AzkarMode.morning: List<int>.filled(azkarData.length, 0),
@@ -71,7 +75,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       List.generate(hifzData.length, (_) => GlobalKey());
 
   // Keys to measure actual rendered header + progress height at runtime
-  final GlobalKey _headerKey  = GlobalKey();
+  final GlobalKey _headerKey = GlobalKey();
   final GlobalKey _progressKey = GlobalKey();
 
   RootTab _rootTab = RootTab.azkar;
@@ -120,13 +124,20 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     _bootstrap();
   }
 
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _hifzScrollController.dispose();
+    _rootPageController.dispose();
+    super.dispose();
+  }
+
   Future<void> _bootstrap() async {
     await _loadState();
     await PrayerNotificationService.init();
     _applyModeByClock();
     if (mounted) setState(() => _isInitialized = true);
   }
-
 
   // ═══════════════════════════════════════════════════════════════════════════
   // منطق التاريخ المنطقي
@@ -146,8 +157,11 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     final now = DateTime.now();
     if (forEvening) {
       final fajrToday = DateTime(
-        now.year, now.month, now.day,
-        _effectiveFajrHour, _effectiveFajrMinute,
+        now.year,
+        now.month,
+        now.day,
+        _effectiveFajrHour,
+        _effectiveFajrMinute,
       );
       if (now.isBefore(fajrToday)) {
         return _dateStr(now.subtract(const Duration(days: 1)));
@@ -156,8 +170,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     return _dateStr(now);
   }
 
-  String _dateStr(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-'
+  String _dateStr(DateTime d) => '${d.year.toString().padLeft(4, '0')}-'
       '${d.month.toString().padLeft(2, '0')}-'
       '${d.day.toString().padLeft(2, '0')}';
 
@@ -236,14 +249,14 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     final mfm = prefs.getInt('manual_fajr_minute');
     final mmh = prefs.getInt('manual_maghrib_hour');
     final mmm = prefs.getInt('manual_maghrib_minute');
-    _manualFajrHour    = mfh;
-    _manualFajrMinute  = mfm;
+    _manualFajrHour = mfh;
+    _manualFajrMinute = mfm;
     _manualMaghribHour = mmh;
     _manualMaghribMinute = mmm;
 
     // apply overrides to live fajr fields so _applyModeByClock uses them
-    if (_manualFajrHour != null)   _savedFajrHour   = _manualFajrHour;
-    if (_manualFajrMinute != null) _savedFajrMinute  = _manualFajrMinute;
+    if (_manualFajrHour != null) _savedFajrHour = _manualFajrHour;
+    if (_manualFajrMinute != null) _savedFajrMinute = _manualFajrMinute;
 
     final streaks = _decodeMap(prefs.getString(_streaksKey));
     for (final key in _streaks.keys) {
@@ -321,41 +334,42 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
   // ── وضع الصباح/المساء بناءً على وقت الفجر الحقيقي ────────────────────────
   void _applyModeByClock() {
-  final now = DateTime.now();
+    final now = DateTime.now();
 
-  final fajr = DateTime(
-    now.year,
-    now.month,
-    now.day,
-    _effectiveFajrHour,
-    _effectiveFajrMinute,
-  );
+    final fajr = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      _effectiveFajrHour,
+      _effectiveFajrMinute,
+    );
 
-  final maghrib = DateTime(
-    now.year,
-    now.month,
-    now.day,
-    _effectiveMaghribHour,
-    _effectiveMaghribMinute,
-  );
+    final maghrib = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      _effectiveMaghribHour,
+      _effectiveMaghribMinute,
+    );
 
-  if (now.isBefore(fajr)) {
-    _mode = AzkarMode.evening;
-  } else if (now.isBefore(maghrib)) {
-    _mode = AzkarMode.morning;
-  } else {
-    _mode = AzkarMode.evening;
+    if (now.isBefore(fajr)) {
+      _mode = AzkarMode.evening;
+    } else if (now.isBefore(maghrib)) {
+      _mode = AzkarMode.morning;
+    } else {
+      _mode = AzkarMode.evening;
+    }
+
+    _setSystemBars();
   }
 
-  _setSystemBars();
-}
-
   // ── الوقت الفعلي المستخدم: override إن وُجد، وإلا GPS ───────────────────
-  int get _effectiveFajrHour      => _manualFajrHour      ?? _savedFajrHour    ?? 5;
-  int get _effectiveFajrMinute    => _manualFajrMinute    ?? _savedFajrMinute  ?? 0;
-  int get _effectiveMaghribHour   => _manualMaghribHour   ?? _savedMaghribHour   ?? 18;
-  int get _effectiveMaghribMinute => _manualMaghribMinute ?? _savedMaghribMinute ?? 0;
-
+  int get _effectiveFajrHour => _manualFajrHour ?? _savedFajrHour ?? 5;
+  int get _effectiveFajrMinute => _manualFajrMinute ?? _savedFajrMinute ?? 0;
+  int get _effectiveMaghribHour =>
+      _manualMaghribHour ?? _savedMaghribHour ?? 18;
+  int get _effectiveMaghribMinute =>
+      _manualMaghribMinute ?? _savedMaghribMinute ?? 0;
 
   Future<void> _vibrate([List<int> pattern = const [0, 55]]) async {
     if (!_vibrationEnabled) return;
@@ -372,7 +386,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     return raw <= 0 ? 1 : raw;
   }
 
-  int get _activeTasbihCount => _tasbihTarget == 0 ? _tasbihCountFree : _tasbihCount33;
+  int get _activeTasbihCount =>
+      _tasbihTarget == 0 ? _tasbihCountFree : _tasbihCount33;
 
   void _incrementTasbihCount() {
     if (_tasbihTarget == 0) {
@@ -456,8 +471,12 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
     // Measure the actual rendered height of header + progress bar
     double fixedAreaHeight = 0;
-    if (headerRender is RenderBox)   fixedAreaHeight += headerRender.size.height;
-    if (progressRender is RenderBox) fixedAreaHeight += progressRender.size.height;
+    if (headerRender is RenderBox) {
+      fixedAreaHeight += headerRender.size.height;
+    }
+    if (progressRender is RenderBox) {
+      fixedAreaHeight += progressRender.size.height;
+    }
     // Fallback if keys aren't attached yet
     if (fixedAreaHeight < 10) fixedAreaHeight = 180;
 
@@ -474,10 +493,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     // Short cards can sit near the middle comfortably, but long cards
     // should start close to the top so their first lines remain visible.
     final cardScreenTop = target.localToGlobal(Offset.zero).dy;
-    final newOffset = controller.offset +
-        cardScreenTop -
-        fixedAreaHeight -
-        desiredTopOffset;
+    final newOffset =
+        controller.offset + cardScreenTop - fixedAreaHeight - desiredTopOffset;
 
     await controller.animateTo(
       newOffset.clamp(0.0, controller.position.maxScrollExtent),
@@ -497,7 +514,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             if (rawCount <= 0) return true;
             return e.value >= rawCount;
           })
-        : _activeAzkarCounts.asMap().entries
+        : _activeAzkarCounts
+            .asMap()
+            .entries
             .every((e) => e.value >= _targetForAzkar(e.key));
 
     if (!completed || !mounted) return;
@@ -595,10 +614,10 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                       onPressed: () => Navigator.of(context).pop(),
                       style: FilledButton.styleFrom(
                         backgroundColor: colors.accent,
-                        foregroundColor:
-                            _rootTab == RootTab.hifz || _mode == AzkarMode.morning
-                                ? Colors.white
-                                : colors.buttonFg,
+                        foregroundColor: _rootTab == RootTab.hifz ||
+                                _mode == AzkarMode.morning
+                            ? Colors.white
+                            : colors.buttonFg,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 34, vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -670,7 +689,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
     if (_rootTab == RootTab.hifz) {
       setState(() {
-        for (int i = 0; i < _hifzCounts.length; i++) { _hifzCounts[i] = 0; }
+        for (int i = 0; i < _hifzCounts.length; i++) {
+          _hifzCounts[i] = 0;
+        }
       });
     } else {
       setState(() {
@@ -685,32 +706,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     await _saveState();
   }
 
-  void _handleHorizontalSwipe(DragEndDetails details) {
-    final velocity = details.primaryVelocity ?? 0;
-    if (velocity.abs() < 120) return;
-    setState(() {
-      _rootTab = _rootTab == RootTab.azkar ? RootTab.hifz : RootTab.azkar;
-    });
-  }
-
-  void _setSystemBars() {
-    final colors = _modeColors;
-    final darkIcons = _rootTab == RootTab.hifz || _mode == AzkarMode.morning;
-    SystemChrome.setSystemUIOverlayStyle(
-      SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        systemNavigationBarColor: colors.background,
-        systemNavigationBarDividerColor: colors.background,
-        statusBarIconBrightness:
-            darkIcons ? Brightness.dark : Brightness.light,
-        systemNavigationBarIconBrightness:
-            darkIcons ? Brightness.dark : Brightness.light,
-      ),
-    );
-  }
-
-  _ModeColors get _modeColors {
-    if (_rootTab == RootTab.hifz) {
+  _ModeColors _colorsForTab(RootTab tab) {
+    if (tab == RootTab.hifz) {
       return const _ModeColors(
         background: Color(0xFFE8F4FD),
         card: Color(0xFFFFFFFF),
@@ -752,6 +749,38 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     );
   }
 
+  Future<void> _animateToRootTab(RootTab tab) async {
+    final index = tab == RootTab.azkar ? 0 : 1;
+    if (_rootPageController.hasClients) {
+      await _rootPageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    } else if (mounted) {
+      setState(() => _rootTab = tab);
+    }
+  }
+
+  void _setSystemBars() {
+    final colors = _modeColors;
+    final darkIcons = _rootTab == RootTab.hifz || _mode == AzkarMode.morning;
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: colors.background,
+        systemNavigationBarDividerColor: colors.background,
+        statusBarIconBrightness: darkIcons ? Brightness.dark : Brightness.light,
+        systemNavigationBarIconBrightness:
+            darkIcons ? Brightness.dark : Brightness.light,
+      ),
+    );
+  }
+
+  _ModeColors get _modeColors {
+    return _colorsForTab(_rootTab);
+  }
+
   int get _completedItemsCount {
     if (_rootTab == RootTab.hifz) {
       int done = 0;
@@ -777,10 +806,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     return azkarData.length;
   }
 
-  double get _progress =>
-      _totalItemsCount == 0
-          ? 0
-          : (_completedItemsCount / _totalItemsCount).clamp(0, 1);
+  double get _progress => _totalItemsCount == 0
+      ? 0
+      : (_completedItemsCount / _totalItemsCount).clamp(0, 1);
 
   String get _progressText => '$_totalItemsCount / $_completedItemsCount';
 
@@ -800,40 +828,48 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           backgroundColor: colors.background,
           body: !_isInitialized
               ? const Center(child: CircularProgressIndicator())
-              : GestureDetector(
-                  onHorizontalDragEnd: _handleHorizontalSwipe,
-                  child: Stack(
-                    children: [
-                      if (_mode == AzkarMode.evening && _rootTab == RootTab.azkar)
-                        const _EveningStarsBackground(),
-                      SafeArea(
-                        top: false,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                colors.background,
-                                colors.background.withValues(alpha: 0.98),
-                              ],
-                            ),
-                          ),
-                          child: Column(
-                            children: [
-                              _buildHeader(colors, key: _headerKey),
-              _buildProgress(colors, key: _progressKey),
-                              Expanded(
-                                child: _rootTab == RootTab.hifz
-                                    ? _buildHifzList(colors)
-                                    : _buildAzkarList(colors),
-                              ),
+              : Stack(
+                  children: [
+                    if (_mode == AzkarMode.evening && _rootTab == RootTab.azkar)
+                      const _EveningStarsBackground(),
+                    SafeArea(
+                      top: false,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              colors.background,
+                              colors.background.withValues(alpha: 0.98),
                             ],
                           ),
                         ),
+                        child: Column(
+                          children: [
+                            _buildHeader(colors, key: _headerKey),
+                            _buildProgress(colors, key: _progressKey),
+                            Expanded(
+                              child: PageView(
+                                controller: _rootPageController,
+                                onPageChanged: (index) {
+                                  final nextTab =
+                                      index == 0 ? RootTab.azkar : RootTab.hifz;
+                                  if (_rootTab != nextTab && mounted) {
+                                    setState(() => _rootTab = nextTab);
+                                  }
+                                },
+                                children: [
+                                  _buildAzkarList(_colorsForTab(RootTab.azkar)),
+                                  _buildHifzList(_colorsForTab(RootTab.hifz)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
           bottomNavigationBar: _buildBottomBar(colors),
           floatingActionButton: FloatingActionButton.extended(
@@ -866,8 +902,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     return Container(
       key: key,
       padding: const EdgeInsets.fromLTRB(16, 46, 16, 18),
-      decoration:
-          BoxDecoration(border: Border(bottom: BorderSide(color: colors.border))),
+      decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: colors.border))),
       child: Column(
         children: [
           Row(
@@ -993,12 +1029,14 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             children: [
               Text('التقدم',
                   style: TextStyle(
-                      color: colors.accentText.withValues(alpha: 0.8), fontSize: 18)),
+                      color: colors.accentText.withValues(alpha: 0.8),
+                      fontSize: 18)),
               const Spacer(),
               Text(_progressText,
                   textDirection: TextDirection.ltr,
                   style: TextStyle(
-                      color: colors.accentText.withValues(alpha: 0.8), fontSize: 18)),
+                      color: colors.accentText.withValues(alpha: 0.8),
+                      fontSize: 18)),
             ],
           ),
           const SizedBox(height: 8),
@@ -1031,8 +1069,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         final currentCount = items[index];
         final target = _targetForAzkar(index);
         final done = currentCount >= target;
-        final text =
-            _mode == AzkarMode.morning ? (item.s ?? '') : (item.e ?? item.s ?? '');
+        final text = _mode == AzkarMode.morning
+            ? (item.s ?? '')
+            : (item.e ?? item.s ?? '');
         final note = _mode == AzkarMode.morning ? item.ns : item.ne;
 
         return _buildZikrCard(
@@ -1042,9 +1081,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           text: text,
           note: note ?? '',
           fadl: item.fadl ?? '',
-          topText: index == 2
-          ? 'أَعُوذُ بِاللهِ مِنَ الشَّيْطَانِ الرَّجِيمِ'
-              : '',
+          topText:
+              index == 2 ? 'أَعُوذُ بِاللهِ مِنَ الشَّيْطَانِ الرَّجِيمِ' : '',
           currentCount: currentCount,
           targetCount: target,
           done: done,
@@ -1144,154 +1182,156 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           child: Directionality(
             textDirection: TextDirection.rtl,
             child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Text('${index + 1}',
-                      style: TextStyle(
-                          color: colors.accentText.withValues(alpha: 0.35))),
-                  const Spacer(),
-                  if (done)
-                    Row(
-                      children: [
-                        Text('اكتمل',
-                            style: GoogleFonts.scheherazadeNew(
-                              color: const Color(0xFF5EB36C),
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                            )),
-                        const SizedBox(width: 4),
-                        const Icon(Icons.check,
-                            size: 18, color: Color(0xFF5EB36C)),
-                      ],
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              if (topText.isNotEmpty) ...[
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    topText,
-                    textAlign: TextAlign.right,
-                    textDirection: TextDirection.rtl,
-                    style: GoogleFonts.scheherazadeNew(
-                      fontSize: 14 * _fontSize,
-                      height: 1.7,
-                      color: colors.accentText.withValues(alpha: 0.55),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-              ],
-              Text(
-                text,
-                textAlign: TextAlign.justify,
-                textDirection: TextDirection.rtl,
-                style: GoogleFonts.scheherazadeNew(
-                  fontSize: 18 * _fontSize,
-                  height: 1.95,
-                  color: colors.text,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (note.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    note,
-                    textAlign: TextAlign.right,
-                    textDirection: TextDirection.rtl,
-                    style: GoogleFonts.amiri(
-                      color: colors.accentText.withValues(alpha: 0.7),
-                      fontSize: 14 * _fontSize,
-                    ),
-                  ),
-                ),
-              ],
-              if (fadl.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showFadlPopup(fadl),
-                    icon: const Icon(Icons.auto_awesome),
-                    label: const Text('فضل الذكر'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: colors.accentText,
-                      side: BorderSide(color: colors.border),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(999)),
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 10),
-              Row(
-                textDirection: TextDirection.ltr,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _buildTapButton(colors, done, onTap),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerRight,
-                        child: Row(
-                          textDirection: TextDirection.rtl,
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Text(
-                              '$targetCount / $currentCount',
-                              textDirection: TextDirection.ltr,
-                              style: TextStyle(
-                                color: colors.accentText,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Text('${index + 1}',
+                        style: TextStyle(
+                            color: colors.accentText.withValues(alpha: 0.35))),
+                    const Spacer(),
+                    if (done)
+                      Row(
+                        children: [
+                          Text('اكتمل',
+                              style: GoogleFonts.scheherazadeNew(
+                                color: const Color(0xFF5EB36C),
                                 fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            ConstrainedBox(
-                              constraints:
-                                  BoxConstraints(maxWidth: dotsMaxWidth),
-                              child: Wrap(
-                                spacing: dotSpacing,
-                                runSpacing: dotSpacing,
-                                alignment: WrapAlignment.start,
-                                children: List.generate(targetCount, (dotIdx) {
-                                  final filled = dotIdx < currentCount;
-                                  return AnimatedContainer(
-                                    duration:
-                                        const Duration(milliseconds: 160),
-                                    width: dotSize,
-                                    height: dotSize,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: filled
-                                          ? colors.accent
-                                          : Colors.transparent,
-                                      border: Border.all(
-                                        color: colors.accent.withValues(alpha: 0.8),
-                                        width: targetCount >= 30 ? 1.0 : 1.2,
-                                      ),
-                                    ),
-                                  );
-                                }),
-                              ),
-                            ),
-                          ],
-                        ),
+                                fontWeight: FontWeight.w700,
+                              )),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.check,
+                              size: 18, color: Color(0xFF5EB36C)),
+                        ],
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (topText.isNotEmpty) ...[
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      topText,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      style: GoogleFonts.scheherazadeNew(
+                        fontSize: 14 * _fontSize,
+                        height: 1.7,
+                        color: colors.accentText.withValues(alpha: 0.55),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                Text(
+                  text,
+                  textAlign: TextAlign.justify,
+                  textDirection: TextDirection.rtl,
+                  style: GoogleFonts.scheherazadeNew(
+                    fontSize: 18 * _fontSize,
+                    height: 1.95,
+                    color: colors.text,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (note.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      note,
+                      textAlign: TextAlign.right,
+                      textDirection: TextDirection.rtl,
+                      style: GoogleFonts.amiri(
+                        color: colors.accentText.withValues(alpha: 0.7),
+                        fontSize: 14 * _fontSize,
                       ),
                     ),
                   ),
                 ],
-              ),
-            ],
+                if (fadl.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showFadlPopup(fadl),
+                      icon: const Icon(Icons.auto_awesome),
+                      label: const Text('فضل الذكر'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: colors.accentText,
+                        side: BorderSide(color: colors.border),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999)),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Row(
+                  textDirection: TextDirection.ltr,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _buildTapButton(colors, done, onTap),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Row(
+                            textDirection: TextDirection.rtl,
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Text(
+                                '$targetCount / $currentCount',
+                                textDirection: TextDirection.ltr,
+                                style: TextStyle(
+                                  color: colors.accentText,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              ConstrainedBox(
+                                constraints:
+                                    BoxConstraints(maxWidth: dotsMaxWidth),
+                                child: Wrap(
+                                  spacing: dotSpacing,
+                                  runSpacing: dotSpacing,
+                                  alignment: WrapAlignment.start,
+                                  children:
+                                      List.generate(targetCount, (dotIdx) {
+                                    final filled = dotIdx < currentCount;
+                                    return AnimatedContainer(
+                                      duration:
+                                          const Duration(milliseconds: 160),
+                                      width: dotSize,
+                                      height: dotSize,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: filled
+                                            ? colors.accent
+                                            : Colors.transparent,
+                                        border: Border.all(
+                                          color: colors.accent
+                                              .withValues(alpha: 0.8),
+                                          width: targetCount >= 30 ? 1.0 : 1.2,
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
@@ -1368,7 +1408,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               active: _rootTab == RootTab.azkar,
               colors: colors,
               done: azkarComplete,
-              onTap: () => setState(() => _rootTab = RootTab.azkar),
+              onTap: () => _animateToRootTab(RootTab.azkar),
             ),
             _buildTabButton(
               title: 'آيات الحفظ',
@@ -1376,7 +1416,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               active: _rootTab == RootTab.hifz,
               colors: colors,
               done: hifzComplete,
-              onTap: () => setState(() => _rootTab = RootTab.hifz),
+              onTap: () => _animateToRootTab(RootTab.hifz),
             ),
           ],
         ),
@@ -1609,8 +1649,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                         fontWeight: FontWeight.bold,
                         color: colors.accentText)),
                 Text('الحالية',
-                    style:
-                        TextStyle(color: colors.accentText.withValues(alpha: 0.65))),
+                    style: TextStyle(
+                        color: colors.accentText.withValues(alpha: 0.65))),
               ],
             ),
             const SizedBox(width: 16),
@@ -1622,8 +1662,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                         fontWeight: FontWeight.bold,
                         color: colors.accentText)),
                 Text('الأطول',
-                    style:
-                        TextStyle(color: colors.accentText.withValues(alpha: 0.65))),
+                    style: TextStyle(
+                        color: colors.accentText.withValues(alpha: 0.65))),
               ],
             ),
           ],
@@ -1641,8 +1681,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   }
 
   Widget _buildCalendarPage(_ModeColors colors, StateSetter setModal) {
-    final monthStart =
-        DateTime(_calendarMonth.year, _calendarMonth.month, 1);
+    final monthStart = DateTime(_calendarMonth.year, _calendarMonth.month, 1);
     final daysInMonth =
         DateTime(_calendarMonth.year, _calendarMonth.month + 1, 0).day;
     final leadingEmpty = (6 - monthStart.weekday) % 7;
@@ -1650,10 +1689,20 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     final trailingEmpty = (7 - (totalCells % 7)) % 7;
 
     const monthNames = [
-      'يناير','فبراير','مارس','أبريل','مايو','يونيو',
-      'يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر',
+      'يناير',
+      'فبراير',
+      'مارس',
+      'أبريل',
+      'مايو',
+      'يونيو',
+      'يوليو',
+      'أغسطس',
+      'سبتمبر',
+      'أكتوبر',
+      'نوفمبر',
+      'ديسمبر',
     ];
-    const weekDays = ['سبت','جمع','خمي','أرب','ثلا','اثن','أحد'];
+    const weekDays = ['سبت', 'جمع', 'خمي', 'أرب', 'ثلا', 'اثن', 'أحد'];
 
     Widget legendDot(Color color, String label) => Row(
           mainAxisSize: MainAxisSize.min,
@@ -1698,8 +1747,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 _calendarMonth =
                     DateTime(_calendarMonth.year, _calendarMonth.month - 1, 1);
               }),
-              icon:
-                  Icon(Icons.chevron_left_rounded, color: colors.accentText),
+              icon: Icon(Icons.chevron_left_rounded, color: colors.accentText),
             ),
           ],
         ),
@@ -1717,72 +1765,72 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         Directionality(
           textDirection: TextDirection.rtl,
           child: GridView.builder(
-          itemCount:
-              weekDays.length + leadingEmpty + daysInMonth + trailingEmpty,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 7,
-            mainAxisExtent: 72,
-          ),
-          itemBuilder: (context, index) {
-            if (index < weekDays.length) {
-              return Center(
-                child: Text(weekDays[index],
-                    style: TextStyle(
-                        color: colors.accentText.withValues(alpha: 0.6))),
-              );
-            }
+            itemCount:
+                weekDays.length + leadingEmpty + daysInMonth + trailingEmpty,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 7,
+              mainAxisExtent: 72,
+            ),
+            itemBuilder: (context, index) {
+              if (index < weekDays.length) {
+                return Center(
+                  child: Text(weekDays[index],
+                      style: TextStyle(
+                          color: colors.accentText.withValues(alpha: 0.6))),
+                );
+              }
 
-            final dayIndex = index - weekDays.length;
-            if (dayIndex < leadingEmpty ||
-                dayIndex >= leadingEmpty + daysInMonth) {
-              return const SizedBox.shrink();
-            }
+              final dayIndex = index - weekDays.length;
+              if (dayIndex < leadingEmpty ||
+                  dayIndex >= leadingEmpty + daysInMonth) {
+                return const SizedBox.shrink();
+              }
 
-            final day = dayIndex - leadingEmpty + 1;
-            final date =
-                DateTime(_calendarMonth.year, _calendarMonth.month, day);
-            final dateKey = _dateStr(date);
-            final entry = _history[dateKey] ??
-                {'morning': false, 'evening': false, 'hifz': false};
-            final isToday = _sameDate(date, DateTime.now());
+              final day = dayIndex - leadingEmpty + 1;
+              final date =
+                  DateTime(_calendarMonth.year, _calendarMonth.month, day);
+              final dateKey = _dateStr(date);
+              final entry = _history[dateKey] ??
+                  {'morning': false, 'evening': false, 'hifz': false};
+              final isToday = _sameDate(date, DateTime.now());
 
-            List<Widget> dots = [];
-            if (entry['morning'] == true) {
-              dots.add(_calendarDot(const Color(0xFFF59E0B)));
-            }
-            if (entry['evening'] == true) {
-              dots.add(_calendarDot(const Color(0xFF8B5CF6)));
-            }
-            if (entry['hifz'] == true) {
-              dots.add(_calendarDot(const Color(0xFF3B82F6)));
-            }
+              List<Widget> dots = [];
+              if (entry['morning'] == true) {
+                dots.add(_calendarDot(const Color(0xFFF59E0B)));
+              }
+              if (entry['evening'] == true) {
+                dots.add(_calendarDot(const Color(0xFF8B5CF6)));
+              }
+              if (entry['hifz'] == true) {
+                dots.add(_calendarDot(const Color(0xFF3B82F6)));
+              }
 
-            return Container(
-              margin: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: isToday ? colors.accent : Colors.transparent,
-                  width: isToday ? 1.4 : 0,
-                ),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text('$day', style: TextStyle(color: colors.text)),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 2,
-                    runSpacing: 2,
-                    alignment: WrapAlignment.center,
-                    children: dots,
+              return Container(
+                margin: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: isToday ? colors.accent : Colors.transparent,
+                    width: isToday ? 1.4 : 0,
                   ),
-                ],
-              ),
-            );
-          },
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('$day', style: TextStyle(color: colors.text)),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 2,
+                      runSpacing: 2,
+                      alignment: WrapAlignment.center,
+                      children: dots,
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
         ),
       ],
@@ -1877,7 +1925,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         ),
         const SizedBox(height: 12),
         Text(
-          _tasbihTarget == 0 ? 'وضع حر: $tasbihCount' : '$cycleCount / $_tasbihTarget',
+          _tasbihTarget == 0
+              ? 'وضع حر: $tasbihCount'
+              : '$cycleCount / $_tasbihTarget',
           style: TextStyle(color: colors.accentText, fontSize: 18),
         ),
         const SizedBox(height: 16),
@@ -1914,7 +1964,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       selectedColor: colors.chipSelected,
       side: BorderSide(color: colors.border),
       labelStyle: TextStyle(
-        color: active ? colors.accentText : colors.accentText.withValues(alpha: 0.9),
+        color: active
+            ? colors.accentText
+            : colors.accentText.withValues(alpha: 0.9),
       ),
       backgroundColor: colors.chipBg,
     );
@@ -1922,13 +1974,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
   Widget _buildSettingsPage(_ModeColors colors, StateSetter setModal) {
     // ── toggleRow يقرأ القيمة عبر getter لا snapshot ─────────────────────
-    Widget toggleRow(
-      String title,
-      String subtitle,
-      bool Function() getValue,
-      Future<void> Function() onToggle,
-      {IconData? titleIcon}
-    ) {
+    Widget toggleRow(String title, String subtitle, bool Function() getValue,
+        Future<void> Function() onToggle,
+        {IconData? titleIcon}) {
       return Directionality(
         textDirection: TextDirection.rtl,
         child: SwitchListTile(
@@ -2119,7 +2167,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       selectedColor: colors.chipSelected,
       side: BorderSide(color: colors.border),
       labelStyle: TextStyle(
-        color: active ? colors.accentText : colors.accentText.withValues(alpha: 0.9),
+        color: active
+            ? colors.accentText
+            : colors.accentText.withValues(alpha: 0.9),
       ),
       backgroundColor: colors.chipBg,
     );
@@ -2274,10 +2324,17 @@ class _EveningStarsBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const positions = <Offset>[
-      Offset(30, 90),   Offset(120, 40),  Offset(220, 120),
-      Offset(310, 60),  Offset(60, 220),  Offset(180, 260),
-      Offset(330, 310), Offset(80, 430),  Offset(260, 520),
-      Offset(40, 630),  Offset(320, 720),
+      Offset(30, 90),
+      Offset(120, 40),
+      Offset(220, 120),
+      Offset(310, 60),
+      Offset(60, 220),
+      Offset(180, 260),
+      Offset(330, 310),
+      Offset(80, 430),
+      Offset(260, 520),
+      Offset(40, 630),
+      Offset(320, 720),
     ];
 
     return IgnorePointer(
@@ -2302,4 +2359,3 @@ class _EveningStarsBackground extends StatelessWidget {
     );
   }
 }
-
