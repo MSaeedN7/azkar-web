@@ -24,6 +24,9 @@ enum RootTab { azkar, hifz }
 
 enum SheetTab { streaks, calendar, tasbih, settings }
 
+const _hifzIcon = Icons.shield_moon_rounded;
+const _completeColor = Color(0xFF4CAF50);
+
 class AzkarNativeApp extends StatelessWidget {
   const AzkarNativeApp({super.key});
 
@@ -537,16 +540,12 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
 
   Future<void> _showCompletionScreen() async {
     final colors = _modeColors;
-    final icon = _rootTab == RootTab.hifz
-        ? Icons.shield_rounded
-        : Icons.volunteer_activism_rounded;
+    final icon = _currentSectionIcon;
     final subtitle = _rootTab == RootTab.hifz
         ? 'اكتملت آيات الحفظ'
         : _mode == AzkarMode.morning
             ? 'اكتملت أذكار الصباح'
             : 'اكتملت أذكار المساء';
-    final secondary =
-        _rootTab == RootTab.hifz ? 'حفظك الله ورعاك 🤲' : 'تقبّل الله منك 🤲';
 
     await showGeneralDialog<void>(
       context: context,
@@ -599,25 +598,12 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                       style: GoogleFonts.amiri(
                           fontSize: 22, height: 1.6, color: colors.text),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      secondary,
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.amiri(
-                        fontSize: 20,
-                        height: 1.6,
-                        color: colors.accentText.withValues(alpha: 0.88),
-                      ),
-                    ),
                     const SizedBox(height: 26),
                     FilledButton(
                       onPressed: () => Navigator.of(context).pop(),
                       style: FilledButton.styleFrom(
                         backgroundColor: colors.accent,
-                        foregroundColor: _rootTab == RootTab.hifz ||
-                                _mode == AzkarMode.morning
-                            ? Colors.white
-                            : colors.buttonFg,
+                        foregroundColor: colors.buttonFg,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 34, vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -682,6 +668,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
   }
 
   Future<void> _resetCurrent() async {
+    final confirmed = await _confirmReset();
+    if (!confirmed || !mounted) return;
+
     final key = _rootTab == RootTab.hifz
         ? 'hifz'
         : (_mode == AzkarMode.morning ? 'morning' : 'evening');
@@ -706,6 +695,79 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     await _saveState();
   }
 
+  Future<bool> _confirmReset() async {
+    final colors = _modeColors;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          backgroundColor: colors.card,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide(color: colors.border),
+          ),
+          title: Text(
+            'إعادة البدء',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.scheherazadeNew(
+              color: colors.title,
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          content: Text(
+            'هل أنت متأكد من إعادة البدء؟',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.amiri(
+              color: colors.text,
+              fontSize: 21,
+              height: 1.5,
+            ),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colors.title,
+                side: BorderSide(color: colors.title),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              child: const Text('لا'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colors.title,
+                side: BorderSide(color: colors.title),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              child: const Text('نعم'),
+            ),
+          ],
+        ),
+      ),
+    );
+    return result == true;
+  }
+
+  IconData get _currentSectionIcon {
+    if (_rootTab == RootTab.hifz) return _hifzIcon;
+    return _mode == AzkarMode.morning
+        ? Icons.wb_sunny_rounded
+        : Icons.nights_stay_rounded;
+  }
+
+  IconData get _azkarTabIcon => _mode == AzkarMode.morning
+      ? Icons.wb_sunny_rounded
+      : Icons.nights_stay_rounded;
+
   _ModeColors _colorsForTab(RootTab tab) {
     if (tab == RootTab.hifz) {
       return const _ModeColors(
@@ -719,6 +781,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         chipBg: Color(0xFFFFFFFF),
         chipSelected: Color(0xFF2A7ABF),
         buttonFg: Color(0xFFFFFFFF),
+        progress: Color(0xFF1769A8),
+        progressTrack: Color(0x332A7ABF),
       );
     }
     if (_mode == AzkarMode.morning) {
@@ -733,6 +797,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         chipBg: Color(0xFFFFFAEB),
         chipSelected: Color(0xFFC9A84C),
         buttonFg: Color(0xFF2C1F0E),
+        progress: Color(0xFF8A5A08),
+        progressTrack: Color(0x408A5A08),
       );
     }
     return const _ModeColors(
@@ -746,6 +812,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       chipBg: Color(0xFF3E3551),
       chipSelected: Color(0xFF6A5E79),
       buttonFg: Color(0xFF24163A),
+      progress: Color(0xFF6D28D9),
+      progressTrack: Color(0x40C4B5FD),
     );
   }
 
@@ -1047,8 +1115,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               child: LinearProgressIndicator(
                 value: _progress,
                 minHeight: 7,
-                backgroundColor: colors.border.withValues(alpha: 0.4),
-                valueColor: AlwaysStoppedAnimation<Color>(colors.accent),
+                backgroundColor: colors.progressTrack,
+                valueColor: AlwaysStoppedAnimation<Color>(colors.progress),
               ),
             ),
           ),
@@ -1195,13 +1263,13 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                         children: [
                           Text('اكتمل',
                               style: GoogleFonts.scheherazadeNew(
-                                color: const Color(0xFF5EB36C),
+                                color: _completeColor,
                                 fontSize: 18,
                                 fontWeight: FontWeight.w700,
                               )),
                           const SizedBox(width: 4),
                           const Icon(Icons.check,
-                              size: 18, color: Color(0xFF5EB36C)),
+                              size: 18, color: _completeColor),
                         ],
                       ),
                   ],
@@ -1312,11 +1380,12 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
                                         color: filled
-                                            ? colors.accent
+                                            ? colors.progress
                                             : Colors.transparent,
                                         border: Border.all(
-                                          color: colors.accent
-                                              .withValues(alpha: 0.8),
+                                          color: filled
+                                              ? colors.progress
+                                              : colors.progressTrack,
                                           width: targetCount >= 30 ? 1.0 : 1.2,
                                         ),
                                       ),
@@ -1350,19 +1419,17 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: done
-              ? const Color(0xFF4CAF50).withValues(alpha: 0.12)
+              ? _completeColor.withValues(alpha: 0.12)
               : Colors.transparent,
           border: Border.all(
-            color: done
-                ? const Color(0xFF4CAF50)
-                : colors.accent.withValues(alpha: 0.78),
+            color:
+                done ? _completeColor : colors.accent.withValues(alpha: 0.78),
             width: 2,
           ),
         ),
         child: Center(
           child: done
-              ? const Icon(Icons.check_rounded,
-                  color: Color(0xFF4CAF50), size: 30)
+              ? const Icon(Icons.check_rounded, color: _completeColor, size: 30)
               : SvgPicture.asset(
                   'assets/SVG/dhikr_button_clean.svg',
                   width: 38,
@@ -1404,7 +1471,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                       ? 'أذكار الصباح'
                       : 'أذكار المساء')
                   : 'الأذكار',
-              icon: Icons.volunteer_activism_rounded,
+              icon: _azkarTabIcon,
               active: _rootTab == RootTab.azkar,
               colors: colors,
               done: azkarComplete,
@@ -1412,7 +1479,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             ),
             _buildTabButton(
               title: 'آيات الحفظ',
-              icon: Icons.shield_moon_rounded,
+              icon: _hifzIcon,
               active: _rootTab == RootTab.hifz,
               colors: colors,
               done: hifzComplete,
@@ -1451,7 +1518,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                     left: -6,
                     child: CircleAvatar(
                       radius: 7,
-                      backgroundColor: Color(0xFF4CAF50),
+                      backgroundColor: _completeColor,
                       child: Icon(Icons.check, color: Colors.white, size: 10),
                     ),
                   ),
@@ -1675,7 +1742,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
       children: [
         box('أذكار الصباح', 'morning', Icons.wb_sunny_rounded),
         box('أذكار المساء', 'evening', Icons.nights_stay_rounded),
-        box('آيات الحفظ', 'hifz', Icons.shield_rounded),
+        box('آيات الحفظ', 'hifz', _hifzIcon),
       ],
     );
   }
@@ -1905,7 +1972,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _presetBtn('٣٣', 33, colors, setModal),
+            _presetBtn('33', 33, colors, setModal),
             const SizedBox(width: 8),
             _presetBtn('حر', 0, colors, setModal),
           ],
@@ -1918,8 +1985,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             child: LinearProgressIndicator(
               value: progress,
               minHeight: 7,
-              backgroundColor: colors.border.withValues(alpha: 0.5),
-              valueColor: AlwaysStoppedAnimation<Color>(colors.accent),
+              backgroundColor: colors.progressTrack,
+              valueColor: AlwaysStoppedAnimation<Color>(colors.progress),
             ),
           ),
         ),
@@ -1933,6 +2000,8 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
         const SizedBox(height: 16),
         OutlinedButton.icon(
           onPressed: () async {
+            final confirmed = await _confirmReset();
+            if (!confirmed) return;
             setModal(_resetActiveTasbihCount);
             await _saveState();
           },
@@ -2218,6 +2287,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               Text(
                 fadlText,
                 textAlign: TextAlign.right,
+                textDirection: TextDirection.rtl,
                 style: GoogleFonts.amiri(
                   fontSize: 24,
                   height: 1.9,
@@ -2302,6 +2372,8 @@ class _ModeColors {
   final Color chipBg;
   final Color chipSelected;
   final Color buttonFg;
+  final Color progress;
+  final Color progressTrack;
 
   const _ModeColors({
     required this.background,
@@ -2314,6 +2386,8 @@ class _ModeColors {
     required this.chipBg,
     required this.chipSelected,
     required this.buttonFg,
+    required this.progress,
+    required this.progressTrack,
   });
 }
 

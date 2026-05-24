@@ -6,11 +6,11 @@ import 'data.dart';
 
 // ─── Task names ──────────────────────────────────────────────────────────────
 const kResetMorningHifzTask = 'reset_morning_hifz_v1';
-const kResetEveningTask     = 'reset_evening_v1';
+const kResetEveningTask = 'reset_evening_v1';
 
 // ─── Keys — يجب أن تطابق ما في main.dart تماماً ─────────────────────────────
-const _stateKey  = 'native_azkar_state_v2';
-const _hifzKey   = 'native_hifz_state_v2';
+const _stateKey = 'native_azkar_state_v2';
+const _hifzKey = 'native_hifz_state_v2';
 const _historyKey = 'native_history_v2';
 
 // ─── Callback يُستدعى من WorkManager في الخلفية ─────────────────────────────
@@ -102,13 +102,18 @@ Future<void> _scheduleMorningReset() async {
 
 // ─── جدولة reset المساء عند وقت الفجر المحفوظ ───────────────────────────────
 Future<void> _scheduleEveningReset(SharedPreferences prefs) async {
-  final fajrHour   = prefs.getInt('fajr_hour')   ?? 5;
+  final fajrHour = prefs.getInt('fajr_hour') ?? 5;
   final fajrMinute = prefs.getInt('fajr_minute') ?? 0;
-  final now        = DateTime.now();
+  final now = DateTime.now();
 
   // فجر اليوم
   DateTime fajrTime = DateTime(
-    now.year, now.month, now.day, fajrHour, fajrMinute, 30,
+    now.year,
+    now.month,
+    now.day,
+    fajrHour,
+    fajrMinute,
+    30,
   );
 
   // إذا الفجر مضى اليوم → جدول لفجر الغد
