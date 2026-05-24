@@ -1383,9 +1383,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                                             ? colors.progress
                                             : Colors.transparent,
                                         border: Border.all(
-                                          color: filled
-                                              ? colors.progress
-                                              : colors.progressTrack,
+                                          color: colors.progress,
                                           width: targetCount >= 30 ? 1.0 : 1.2,
                                         ),
                                       ),
@@ -1422,8 +1420,7 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
               ? _completeColor.withValues(alpha: 0.12)
               : Colors.transparent,
           border: Border.all(
-            color:
-                done ? _completeColor : colors.accent.withValues(alpha: 0.78),
+            color: done ? _completeColor : colors.progress,
             width: 2,
           ),
         ),
