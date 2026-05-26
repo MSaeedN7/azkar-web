@@ -977,10 +977,11 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
           Row(
             textDirection: TextDirection.rtl,
             children: [
-              IconButton(
+              _headerIconButton(
+                colors: colors,
+                icon: Icons.more_vert_rounded,
                 onPressed: _openBottomSheet,
-                icon: Icon(Icons.more_vert_rounded,
-                    color: colors.accentText, size: 30),
+                tooltip: 'القائمة',
               ),
               Expanded(
                 child: Column(
@@ -1014,7 +1015,12 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                   ],
                 ),
               ),
-              const SizedBox(width: 48),
+              _headerIconButton(
+                colors: colors,
+                icon: Icons.info_outline_rounded,
+                onPressed: _showAboutAppPopup,
+                tooltip: 'حول التطبيق',
+              ),
             ],
           ),
           if (_rootTab == RootTab.azkar) ...[
@@ -1036,6 +1042,27 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _headerIconButton({
+    required _ModeColors colors,
+    required IconData icon,
+    required VoidCallback onPressed,
+    required String tooltip,
+  }) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: colors.border, width: 1.2),
+      ),
+      child: IconButton(
+        onPressed: onPressed,
+        tooltip: tooltip,
+        icon: Icon(icon, color: colors.accentText, size: 28),
       ),
     );
   }
@@ -2334,7 +2361,6 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'تطبيق أذكار يساعدك على المحافظة على أذكار الصباح والمساء وآيات الحفظ.\n\n'
                   'جُمعت هذه الأذكار من كتاب الإمام المفسّر المحدّث الشيخ عبد الله سراج الدين الحسيني رضي الله عنه.\n\n'
                   'نسأل الله أن ينفعنا به، ويجعله خالصًا لوجهه الكريم، وفي ميزان حسناتنا.',
                   textAlign: TextAlign.right,
