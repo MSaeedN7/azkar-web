@@ -1020,6 +1020,9 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
                 icon: Icons.info_outline_rounded,
                 onPressed: _showAboutAppPopup,
                 tooltip: 'حول التطبيق',
+                bordered: false,
+                size: 52,
+                iconSize: 31,
               ),
             ],
           ),
@@ -1051,18 +1054,21 @@ class _AzkarHomePageState extends State<AzkarHomePage> {
     required IconData icon,
     required VoidCallback onPressed,
     required String tooltip,
+    bool bordered = true,
+    double size = 48,
+    double iconSize = 28,
   }) {
     return Container(
-      width: 48,
-      height: 48,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: colors.border, width: 1.2),
+        border: bordered ? Border.all(color: colors.border, width: 1.2) : null,
       ),
       child: IconButton(
         onPressed: onPressed,
         tooltip: tooltip,
-        icon: Icon(icon, color: colors.accentText, size: 28),
+        icon: Icon(icon, color: colors.accentText, size: iconSize),
       ),
     );
   }
